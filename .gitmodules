@@ -1,0 +1,4 @@
+[submodule "ext/liblava"]
+	path = ext/liblava
+	url = https://github.com/liblava/liblava.git
+	branch = master

@@ -1,2 +1,1 @@
-# lava-rt
-Raytracing with liblava
+🌈 **Vulkan raytracing with [liblava](https://git.io/liblava)**
