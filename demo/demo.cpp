@@ -128,7 +128,7 @@ device::ptr create_raytracing_device(device_manager& manager) {
         }
 
         log()->info("using device: {} ({})", physical_device.get_properties().deviceName,
-                          physical_device.get_device_type_string());
+                    physical_device.get_device_type_string());
 
         allocator::ptr alloc = make_custom_flags_allocator(physical_device.get(), device->get(), VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT);
         device->set_allocator(alloc);
@@ -168,7 +168,7 @@ std::optional<VkFormat> get_supported_format(device_ptr device, const VkFormats&
     return std::nullopt;
 }
 
-VkDeviceAddress get_buffer_address(lava::device_ptr device, lava::buffer::ptr buffer) {
+VkDeviceAddress get_buffer_address(device_ptr device, buffer::ptr buffer) {
     const VkBufferDeviceAddressInfoKHR addr_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
         .buffer = buffer->get()
@@ -244,7 +244,7 @@ custom_flags_allocator::custom_flags_allocator(VkPhysicalDevice physical_device,
 #endif
     };
 
-    VmaAllocatorCreateInfo allocator_info {
+    VmaAllocatorCreateInfo allocator_info{
         .flags = flags,
         .physicalDevice = physical_device,
         .device = device,

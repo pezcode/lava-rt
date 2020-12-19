@@ -30,7 +30,10 @@ namespace lava {
                 virtual bool create(lava::device_ptr device) = 0;
                 virtual void destroy();
 
+                // TODO host command versions of build and compact
+
                 bool build(VkCommandBuffer cmd_buf, VkDeviceAddress scratch_buffer);
+                acceleration_structure::ptr compact(VkCommandBuffer cmd_buf);
 
                 VkAccelerationStructureKHR get() const {
                     return handle;
@@ -50,6 +53,8 @@ namespace lava {
                 VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
                 VkDeviceAddress address = 0;
 
+                VkQueryPool query_pool = VK_NULL_HANDLE;
+
                 buffer::ptr as_buffer;
 
                 std::vector<VkAccelerationStructureGeometryKHR> geometries;
@@ -57,6 +62,9 @@ namespace lava {
 
                 bool allow_updates;
                 bool allow_compaction;
+
+                // this is set on the newly created acceleration structure by compact()
+                VkDeviceSize compact_size = 0;
 
                 bool built = false;
 
@@ -72,8 +80,8 @@ namespace lava {
 
                 virtual bool create(lava::device_ptr device) override;
 
-                void clear_geometries();
-                
+                // TODO AABB support
+
                 void add_geometry(const VkAccelerationStructureGeometryTrianglesDataKHR& triangles, const VkAccelerationStructureBuildRangeInfoKHR& range) {
                     acceleration_structure::add_geometry({ .triangles = triangles }, VK_GEOMETRY_TYPE_TRIANGLES_KHR, range);
                 }
@@ -82,6 +90,8 @@ namespace lava {
                     acceleration_structure::add_geometry({ .aabbs = aabbs }, VK_GEOMETRY_TYPE_AABBS_KHR);
                 }
                 */
+
+                void clear_geometries();
             };
 
             struct top_level_acceleration_structure : acceleration_structure {
@@ -95,9 +105,12 @@ namespace lava {
                 // custom_index is optional and corresponds to gl_InstanceCustomIndex in hit shaders
                 // without custom index, gl_InstanceID is just the increasing index of the instances being added
                 void add_instance(bottom_level_acceleration_structure::ptr as, lava::index custom_index = 0, const glm::mat4x3& transform = glm::identity<glm::mat4x3>());
+                void update_instance(lava::index i, bottom_level_acceleration_structure::ptr blas, lava::index custom_index = 0, const glm::mat4x3& transform = glm::identity<glm::mat4x3>());
 
                 // index here is the actual index, not the custom index!
-                void set_transform(lava::index index, const glm::mat4x3& transform);
+                void set_instance_transform(lava::index i, const glm::mat4x3& transform);
+
+                void clear_instances();
 
             private:
                 std::vector<VkAccelerationStructureInstanceKHR> instances;

@@ -14,7 +14,7 @@ layout (set = 1, binding = 0) uniform accelerationStructureEXT top_level_as;
 
 layout (scalar, set = 1, binding = 1) restrict readonly buffer sso_instances {
     // per mesh/instance data
-    // index with gl_InstanceCustomIndexNV
+    // index with gl_InstanceID/gl_InstanceCustomIndexEXT
     instance instances[];
 };
 
@@ -50,7 +50,7 @@ triangle get_triangle(instance ins, uint primitive) {
 }
 
 void main() {
-    instance ins = instances[gl_InstanceCustomIndexEXT];
+    instance ins = instances[gl_InstanceID];
     triangle tri = get_triangle(ins, gl_PrimitiveID);
     vertex v = get_vertex(tri, barycentric_coord);
     payload.color = v.color.rgb;

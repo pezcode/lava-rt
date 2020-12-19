@@ -121,8 +121,8 @@ int main(int argc, char* argv[]) {
             // transition image to general layout
             return one_time_command_buffer(
                 app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
-                    insert_image_memory_barrier(app.device, cmd_buf, output_image->get(), 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, output_image->get_subresource_range());
+                    insert_image_memory_barrier(app.device, cmd_buf, output_image->get(), 0, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, output_image->get_subresource_range());
                 });
         };
 
@@ -256,6 +256,8 @@ int main(int argc, char* argv[]) {
         // - a BLAS (bottom level) for each mesh
         // - one TLAS (top level) referencing all the BLAS
 
+        bool compact = true;
+
         top_as = make_top_level_acceleration_structure();
         top_as->set_allow_updates(true);
 
@@ -264,6 +266,7 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < instances.size(); i++) {
             const instance_data& instance = instances[i];
             bottom_level_acceleration_structure::ptr bottom_as = make_bottom_level_acceleration_structure();
+            bottom_as->set_allow_compaction(compact);
             const VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
                                                                                 .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
                                                                                 .vertexData = vertex_buffer_address,
@@ -280,9 +283,7 @@ int main(int argc, char* argv[]) {
             if (!bottom_as->create(app.device))
                 return false;
             bottom_as_list.push_back(bottom_as);
-            // if your mesh is static, you can set the transformation matrix here once
-            // we update the matrix in on_process every frame for the animation
-            top_as->add_instance(bottom_as, i, glm::mat4(1.0f));
+            top_as->add_instance(bottom_as);
             scratch_buffer_size = std::max(scratch_buffer_size, bottom_as->scratch_buffer_size());
         }
 
@@ -294,11 +295,9 @@ int main(int argc, char* argv[]) {
         scratch_buffer = make_buffer();
         if (!scratch_buffer->create(app.device, nullptr, scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR))
             return false;
-
         scratch_buffer_address = get_buffer_address(app.device, scratch_buffer);
 
-        // build acceleration structures
-        // TODO: compaction
+        // build BLAS
 
         one_time_command_buffer(app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
             // barrier to wait for build to finish
@@ -308,13 +307,40 @@ int main(int argc, char* argv[]) {
             const VkPipelineStageFlags src = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
             const VkPipelineStageFlags dst = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
 
-            for (const auto& bottom_as : bottom_as_list) {
-                bottom_as->build(cmd_buf, scratch_buffer_address);
+            for (size_t i = 0; i < bottom_as_list.size(); i++) {
+                bottom_as_list[i]->build(cmd_buf, scratch_buffer_address);
                 app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst, 0, 1, &barrier, 0, 0, 0, 0);
             }
-            top_as->build(cmd_buf, scratch_buffer_address);
-            app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst, 0, 1, &barrier, 0, 0, 0, 0);
+            //top_as->build(cmd_buf, scratch_buffer_address);
+            app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst /* | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR*/, 0, 1, &barrier, 0, 0, 0, 0);
         });
+
+        // compact BLAS
+        // building must be finished to retrieve the compacted size, or vkGetQueryPoolResults will time out!
+
+        if (compact) {
+            std::vector<bottom_level_acceleration_structure::ptr> compacted_bottom_as_list;
+
+            one_time_command_buffer(app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
+                const VkMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                                  .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR,
+                                                  .dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+                const VkPipelineStageFlags src = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+                const VkPipelineStageFlags dst = VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+
+                for (size_t i = 0; i < bottom_as_list.size(); i++) {
+                    acceleration_structure::ptr compacted_bottom_as = bottom_as_list[i]->compact(cmd_buf);
+                    compacted_bottom_as_list.push_back(std::dynamic_pointer_cast<bottom_level_acceleration_structure>(compacted_bottom_as));
+                    // update the TLAS with references to the new compacted BLAS since their handles changed
+                    top_as->update_instance(i, compacted_bottom_as_list[i]);
+                }
+                app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst, 0, 1, &barrier, 0, 0, 0, 0);
+                top_as->build(cmd_buf, scratch_buffer_address);
+                app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &barrier, 0, 0, 0, 0);
+            });
+
+            bottom_as_list = compacted_bottom_as_list;
+        }
 
         // update descriptors
 
@@ -412,7 +438,7 @@ int main(int argc, char* argv[]) {
             glm::vec3 pos = { (2.0f * i - 1) * 0.5f, 0.0f, 2.0f };
             float angle = glm::radians(15.0f) * float(to_sec(now())) * (i + 1);
             glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * glm::rotate(glm::mat4(1.0f), angle, { 0.0f, 1.0f, 0.0 });
-            top_as->set_transform(i, transform);
+            top_as->set_instance_transform(i, transform);
         }
 
         return true;
