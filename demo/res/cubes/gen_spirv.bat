@@ -1,7 +1,7 @@
 @ECHO on
 
-glslangValidator --target-env vulkan1.1 cubes.frag
-glslangValidator --target-env vulkan1.1 cubes.vert
-glslangValidator --target-env vulkan1.1 cubes.rgen
-glslangValidator --target-env vulkan1.1 cubes.rchit
-glslangValidator --target-env vulkan1.1 cubes.rmiss
+glslangValidator -V cubes.frag
+glslangValidator -V cubes.vert
+glslangValidator -V --target-env spirv1.4 cubes.rgen
+glslangValidator -V --target-env spirv1.4 cubes.rchit
+glslangValidator -V --target-env spirv1.4 cubes.rmiss

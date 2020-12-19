@@ -1,11 +1,10 @@
 #pragma once
 
+#include <glm/mat4x3.hpp>
 #include <liblava/base/device.hpp>
 #include <liblava/resource/buffer.hpp>
-#include <glm/mat4x3.hpp>
-#include <glm/mat4x4.hpp>
-#include <vector>
 #include <memory>
+#include <vector>
 
 namespace lava {
     namespace extras {
@@ -13,8 +12,6 @@ namespace lava {
 
             struct acceleration_structure {
                 using ptr = std::shared_ptr<acceleration_structure>;
-
-                typedef uint64_t handle_t;
 
                 acceleration_structure();
 
@@ -26,35 +23,46 @@ namespace lava {
                     allow_updates = allow;
                 }
 
-                virtual bool create(lava::device_ptr device) = 0;
-                virtual void build(VkCommandBuffer cmd_buf, lava::buffer::ptr scratch_buffer) = 0;
-                virtual void destroy();
-
-                VkAccelerationStructureNV get() const {
-                    return structure;
+                void set_allow_compaction(bool allow = true) {
+                    allow_compaction = allow;
                 }
 
-                handle_t get_handle() const {
+                virtual bool create(lava::device_ptr device) = 0;
+                virtual void destroy();
+
+                bool build(VkCommandBuffer cmd_buf, VkDeviceAddress scratch_buffer);
+
+                VkAccelerationStructureKHR get() const {
                     return handle;
+                }
+
+                VkDeviceAddress get_address() const {
+                    return address;
                 }
 
                 VkDeviceSize scratch_buffer_size() const;
 
             protected:
                 lava::device_ptr device = nullptr;
-                VkAccelerationStructureCreateInfoNV create_info;
+                VkAccelerationStructureCreateInfoKHR create_info;
+                mutable VkAccelerationStructureBuildGeometryInfoKHR build_info;
 
-                VkAccelerationStructureNV structure = VK_NULL_HANDLE;
-                handle_t handle = 0;
+                VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+                VkDeviceAddress address = 0;
 
-                VmaAllocation allocation = VK_NULL_HANDLE;
-                VmaAllocationInfo allocation_info = {};
+                buffer::ptr as_buffer;
 
-                bool allow_updates = false;
+                std::vector<VkAccelerationStructureGeometryKHR> geometries;
+                std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
+
+                bool allow_updates;
+                bool allow_compaction;
+
                 bool built = false;
 
                 bool create_internal(lava::device_ptr dev);
-                VkMemoryRequirements2 get_memory_requirements(VkAccelerationStructureMemoryRequirementsTypeNV type) const;
+                void add_geometry(const VkAccelerationStructureGeometryDataKHR& geometry_data, VkGeometryTypeKHR type, const VkAccelerationStructureBuildRangeInfoKHR& range);
+                VkAccelerationStructureBuildSizesInfoKHR get_sizes() const;
             };
 
             struct bottom_level_acceleration_structure : acceleration_structure {
@@ -63,13 +71,17 @@ namespace lava {
                 using list = std::vector<ptr>;
 
                 virtual bool create(lava::device_ptr device) override;
-                virtual void build(VkCommandBuffer cmd_buf, lava::buffer::ptr scratch_buffer) override;
-                virtual void destroy() override;
 
-                void add_geometry(const VkGeometryTrianglesNV& triangles);
-
-            private:
-                std::vector<VkGeometryNV> geometries;
+                void clear_geometries();
+                
+                void add_geometry(const VkAccelerationStructureGeometryTrianglesDataKHR& triangles, const VkAccelerationStructureBuildRangeInfoKHR& range) {
+                    acceleration_structure::add_geometry({ .triangles = triangles }, VK_GEOMETRY_TYPE_TRIANGLES_KHR, range);
+                }
+                /*
+                void add_geometry(const VkAccelerationStructureGeometryAabbsDataKHR& aabbs, const VkAccelerationStructureBuildRangeInfoKHR& range) {
+                    acceleration_structure::add_geometry({ .aabbs = aabbs }, VK_GEOMETRY_TYPE_AABBS_KHR);
+                }
+                */
             };
 
             struct top_level_acceleration_structure : acceleration_structure {
@@ -78,31 +90,17 @@ namespace lava {
                 using list = std::vector<ptr>;
 
                 virtual bool create(lava::device_ptr device) override;
-                virtual void build(VkCommandBuffer cmd_buf, lava::buffer::ptr scratch_buffer) override;
                 virtual void destroy() override;
 
-                // column-major transformation matrix
-                void add_instance(bottom_level_acceleration_structure::ptr as, lava::index index, const glm::mat4& transform);
+                // custom_index is optional and corresponds to gl_InstanceCustomIndex in hit shaders
+                // without custom index, gl_InstanceID is just the increasing index of the instances being added
+                void add_instance(bottom_level_acceleration_structure::ptr as, lava::index custom_index = 0, const glm::mat4x3& transform = glm::identity<glm::mat4x3>());
 
-                glm::mat4 get_transform(lava::index index);
-                void set_transform(lava::index index, const glm::mat4& transform);
+                // index here is the actual index, not the custom index!
+                void set_transform(lava::index index, const glm::mat4x3& transform);
 
             private:
-                struct VkGeometryInstanceNV {
-                    // row-major 4x3 transformation matrix
-                    glm::mat3x4 transform;
-                    // appears as gl_InstanceCustomIndexNV
-                    uint32_t instanceCustomIndex : 24;
-                    // visibility mask (&'ed with rayMask)
-                    uint32_t mask : 8;
-                    // hit group index
-                    uint32_t instanceOffset : 24;
-                    // flags for culling etc.
-                    uint32_t flags : 8;
-                    // opaque handle to bottom level acceleration structure
-                    bottom_level_acceleration_structure::handle_t accelerationStructureHandle;
-                };
-                std::vector<VkGeometryInstanceNV> instances;
+                std::vector<VkAccelerationStructureInstanceKHR> instances;
                 lava::buffer instance_buffer;
             };
 

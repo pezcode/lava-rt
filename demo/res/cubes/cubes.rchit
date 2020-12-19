@@ -1,6 +1,6 @@
 #version 460 core
 #extension GL_GOOGLE_include_directive : require
-#extension GL_NV_ray_tracing : require
+#extension GL_EXT_ray_tracing : require
 #extension GL_EXT_scalar_block_layout : enable
 
 #define HIT_SHADER
@@ -8,9 +8,9 @@
 
 // hit attribute of the built-in triangle intersection shader
 // barycentric weights of the point of intersection of ray with triangle
-hitAttributeNV vec2 barycentric_coord;
+hitAttributeEXT vec2 barycentric_coord;
 
-layout (set = 1, binding = 0) uniform accelerationStructureNV top_level_as;
+layout (set = 1, binding = 0) uniform accelerationStructureEXT top_level_as;
 
 layout (scalar, set = 1, binding = 1) restrict readonly buffer sso_instances {
     // per mesh/instance data
@@ -31,7 +31,7 @@ layout (scalar, set = 1, binding = 3) restrict readonly buffer sso_indices {
 };
 
 // output of this shader
-layout (location = 0) rayPayloadInNV ray_payload payload;
+layout (location = 0) rayPayloadInEXT ray_payload payload;
 
 triangle get_triangle(instance ins, uint primitive) {
     uint index_offset = ins.index_base + (primitive * 3);
@@ -50,7 +50,7 @@ triangle get_triangle(instance ins, uint primitive) {
 }
 
 void main() {
-    instance ins = instances[gl_InstanceCustomIndexNV];
+    instance ins = instances[gl_InstanceCustomIndexEXT];
     triangle tri = get_triangle(ins, gl_PrimitiveID);
     vertex v = get_vertex(tri, barycentric_coord);
     payload.color = v.color.rgb;

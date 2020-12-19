@@ -14,6 +14,6 @@ layout (location = 0) out vec4 out_color;
 
 void main() {
     ivec2 coord = ivec2(in_uv * vec2(uniforms.viewport.zw));
-	vec4 frag_color = imageLoad(img_output, coord);
-	out_color = frag_color;
+    vec4 frag_color = imageLoad(img_output, coord);
+    out_color = frag_color;
 }

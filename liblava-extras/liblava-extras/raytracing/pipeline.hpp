@@ -7,7 +7,7 @@ namespace lava {
     namespace extras {
         namespace raytracing {
 
-            using VkRayTracingShaderGroupCreateInfosNV = std::vector<VkRayTracingShaderGroupCreateInfoNV>;
+            using VkRayTracingShaderGroupCreateInfosKHR = std::vector<VkRayTracingShaderGroupCreateInfoKHR>;
 
             struct raytracing_pipeline : lava::pipeline {
                 using ptr = std::shared_ptr<raytracing_pipeline>;
@@ -16,18 +16,17 @@ namespace lava {
 
                 using pipeline::pipeline;
 
-                explicit raytracing_pipeline(lava::device_ptr device, VkPipelineCache pipeline_cache);
+                explicit raytracing_pipeline(lava::device_ptr device, VkPipelineCache pipeline_cache = VK_NULL_HANDLE);
 
                 void bind(VkCommandBuffer cmdBuffer) override;
+
+                const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& get_properties() const {
+                    return properties;
+                }
 
                 bool add_shader_stage(lava::data const& data, VkShaderStageFlagBits stage);
                 bool add_shader(lava::data const& data, VkShaderStageFlagBits stage) {
                     return add_shader_stage(data, stage);
-                }
-
-                bool add_shader_stage(lava::name filename, VkShaderStageFlagBits stage);
-                bool add_shader(lava::name filename, VkShaderStageFlagBits stage) {
-                    return add_shader_stage(filename, stage);
                 }
 
                 void add(shader_stage::ptr const& shader_stage) {
@@ -43,11 +42,11 @@ namespace lava {
 
                 // convenience function for triangle hit groups, don't use if you want procedural hit groups
                 void add_shader_group(VkShaderStageFlagBits stage, uint32_t index);
-                void add_shader_group(const VkRayTracingShaderGroupCreateInfoNV& shader_group) {
+                void add_shader_group(const VkRayTracingShaderGroupCreateInfoKHR& shader_group) {
                     shader_groups.push_back(shader_group);
                 }
 
-                const VkRayTracingShaderGroupCreateInfosNV& get_shader_groups() const {
+                const VkRayTracingShaderGroupCreateInfosKHR& get_shader_groups() const {
                     return shader_groups;
                 }
                 void clear_shader_groups() {
@@ -58,7 +57,7 @@ namespace lava {
                     return max_recursion_depth;
                 }
                 void set_max_recursion_depth(uint32_t depth) {
-                    max_recursion_depth = depth;
+                    max_recursion_depth = std::min(properties.maxRayRecursionDepth, depth);
                 }
 
                 void copy_to(raytracing_pipeline* target) const;
@@ -70,7 +69,9 @@ namespace lava {
                 bool create_internal() override;
                 void destroy_internal() override;
 
-                VkRayTracingShaderGroupCreateInfosNV shader_groups;
+                VkPhysicalDeviceRayTracingPipelinePropertiesKHR properties;
+
+                VkRayTracingShaderGroupCreateInfosKHR shader_groups;
                 shader_stage::list shader_stages;
                 uint32_t max_recursion_depth;
             };

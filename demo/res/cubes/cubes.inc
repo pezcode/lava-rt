@@ -47,10 +47,10 @@ vertex get_vertex(triangle tri, vec2 bary_coord) {
     vec3 barycentrics = vec3(1.0f - bary_coord.x - bary_coord.y, bary_coord.x, bary_coord.y);
     vertex v;
 
-    //v.position = gl_WorldRayOriginNV + (gl_HitTNV * gl_WorldRayDirectionNV);
+    //v.position = gl_WorldRayOriginEXT + (gl_HitTEXT * gl_WorldRayDirectionEXT);
 
     vec3 position = bary_lerp(tri.v0.position, tri.v1.position, tri.v2.position, barycentrics);
-    v.position = gl_ObjectToWorldNV * vec4(position, 1.0);
+    v.position = gl_ObjectToWorldEXT * vec4(position, 1.0);
 
     v.color = bary_lerp(tri.v0.color, tri.v1.color, tri.v2.color, barycentrics);
 
@@ -58,7 +58,7 @@ vertex get_vertex(triangle tri, vec2 bary_coord) {
 
     vec3 normal = bary_lerp(tri.v0.normal, tri.v1.normal, tri.v2.normal, barycentrics);
     // TODO use correct normal matrix
-    v.normal = gl_ObjectToWorldNV * vec4(normal, 0.0);
+    v.normal = gl_ObjectToWorldEXT * vec4(normal, 0.0);
 
     return v;
 }

@@ -1,22 +1,38 @@
 #include <demo.hpp>
 
-lava::device::ptr create_raytracing_device(lava::device_manager& manager) {
-    for (const lava::physical_device::ref physical_device : lava::instance::singleton().get_physical_devices()) {
+using namespace lava;
+
+device::ptr create_raytracing_device(device_manager& manager) {
+    for (const physical_device::ref physical_device : instance::singleton().get_physical_devices()) {
         const VkPhysicalDeviceProperties& properties = physical_device.get_properties();
         if (properties.apiVersion < VK_API_VERSION_1_1)
             continue;
 
-        lava::device::create_param device_params = physical_device.create_default_device_param();
+        device::create_param device_params = physical_device.create_default_device_param();
 
-        device_params.extensions.push_back(VK_NV_RAY_TRACING_EXTENSION_NAME);
+        // https://www.khronos.org/blog/vulkan-ray-tracing-final-specification-release
+
+        device_params.extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        // next 3 required by VK_KHR_acceleration_structure
+        device_params.extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+        device_params.extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
         // allow indexing using non-uniform values (ie. can diverge between shader invocations)
-        // promoted to core 1.2
         device_params.extensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+
+        device_params.extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        // required by VK_KHR_ray_tracing_pipeline
+        device_params.extensions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+
+        // can't test this, needs an RTX GPU :<
+        //device_params.extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+
+        // required by VK_KHR_ray_tracing_pipeline and VK_KHR_ray_query
+        device_params.extensions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+        // required by VK_KHR_spirv_1_4
+        device_params.extensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+
         // new layout for tightly-packed buffers (always uses alignment of base type)
         device_params.extensions.push_back(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
-
-        // allow indexing into sampler arrays with non compile-time constants
-        device_params.features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
 
 #ifdef LIBLAVA_DEBUG
         // bounds-check against buffer ranges
@@ -29,31 +45,75 @@ lava::device::ptr create_raytracing_device(lava::device_manager& manager) {
         device_params.features.vertexPipelineStoresAndAtomics = VK_TRUE;
 #endif
 
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR features_acceleration_structure = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR
+        };
+        features_acceleration_structure.accelerationStructure = VK_TRUE;
+        features_acceleration_structure.descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE;
+
+        VkPhysicalDeviceBufferDeviceAddressFeaturesKHR features_buffer_device_address = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR
+        };
+        features_buffer_device_address.bufferDeviceAddress = VK_TRUE;
+
         VkPhysicalDeviceDescriptorIndexingFeaturesEXT features_descriptor_indexing = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
         };
+        // VK_KHR_acceleration_structure requires the equivalent of the descriptorIndexing feature
+        // https://vulkan.lunarg.com/doc/view/1.2.162.0/windows/1.2-extensions/vkspec.html#features-descriptorIndexing
+        // allow indexing into sampler arrays with non compile-time constants
+        device_params.features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+        device_params.features.shaderStorageBufferArrayDynamicIndexing = VK_TRUE;
+        features_descriptor_indexing.shaderUniformTexelBufferArrayDynamicIndexing = VK_TRUE;
+        features_descriptor_indexing.shaderStorageTexelBufferArrayDynamicIndexing = VK_TRUE;
         // allow indexing into sampler arrays with non uniform values
-        //features_descriptor_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-        // allow unbounded runtime descriptor arrays in shader (but fixed at layout creation)
-        //features_descriptor_indexing.runtimeDescriptorArray = VK_TRUE;
+        features_descriptor_indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        features_descriptor_indexing.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+        features_descriptor_indexing.shaderUniformTexelBufferArrayNonUniformIndexing = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingUniformTexelBufferUpdateAfterBind = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingStorageTexelBufferUpdateAfterBind = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
         // allow only updating a subset of the max count in the layout
-        //features_descriptor_indexing.descriptorBindingPartiallyBound = VK_TRUE;
+        features_descriptor_indexing.descriptorBindingPartiallyBound = VK_TRUE;
+        // allow unbounded runtime descriptor arrays in shader (but fixed at layout creation)
+        features_descriptor_indexing.runtimeDescriptorArray = VK_TRUE;
+
+        // TODO remove
         // allow variable descriptor array size for different sets
         //features_descriptor_indexing.descriptorBindingVariableDescriptorCount = VK_TRUE;
+
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR features_ray_tracing_pipeline = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR
+        };
+        features_ray_tracing_pipeline.rayTracingPipeline = VK_TRUE;
+        features_ray_tracing_pipeline.rayTracingPipelineTraceRaysIndirect = VK_TRUE;
+
+        //VkPhysicalDeviceRayQueryFeaturesKHR features_ray_query = {
+        //    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR
+        //};
+        //features_ray_query.rayQuery = VK_TRUE;
 
         VkPhysicalDeviceScalarBlockLayoutFeaturesEXT features_scalar_block_layout = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES
         };
         features_scalar_block_layout.scalarBlockLayout = VK_TRUE;
 
-        device_params.next = &features_descriptor_indexing;
-        features_descriptor_indexing.pNext = &features_scalar_block_layout;
+        device_params.next = &features_acceleration_structure;
+        features_acceleration_structure.pNext = &features_buffer_device_address;
+        features_buffer_device_address.pNext = &features_descriptor_indexing;
+        features_descriptor_indexing.pNext = &features_ray_tracing_pipeline;
+        //features_ray_tracing_pipeline.pNext = &features_ray_query;
+        //features_ray_query.pNext = &features_scalar_block_layout;
+        features_ray_tracing_pipeline.pNext = &features_scalar_block_layout;
 
-        lava::device::ptr device = manager.create(device_params);
+        device::ptr device = manager.create(device_params);
         if (!device)
             continue;
 
-        // the command buffer used for vkCmdBuildAccelerationStructureNV and vkCmdTraceRaysNV must support compute
+        // the command buffer used for vkCmdBuildAccelerationStructureKHR and vkCmdTraceRaysKHR must support compute
         // we use the graphics queue everywhere for convenience, make sure it supports both graphics and compute
         // the Vulkan specs guarantee that a queue family exists with both if graphics operations are supported
         // TODO
@@ -67,17 +127,21 @@ lava::device::ptr create_raytracing_device(lava::device_manager& manager) {
             continue;
         }
 
-        lava::log()->info("using device: {} ({})", physical_device.get_properties().deviceName,
+        log()->info("using device: {} ({})", physical_device.get_properties().deviceName,
                           physical_device.get_device_type_string());
+
+        allocator::ptr alloc = make_custom_flags_allocator(physical_device.get(), device->get(), VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT);
+        device->set_allocator(alloc);
+
         return device;
     }
 
-    lava::log()->error("no compatible device found");
+    log()->error("no compatible device found");
 
     return nullptr;
 }
 
-std::optional<VkFormat> get_supported_format(lava::device_ptr device, const lava::VkFormats& possible_formats, VkImageUsageFlags usage) {
+std::optional<VkFormat> get_supported_format(device_ptr device, const VkFormats& possible_formats, VkImageUsageFlags usage) {
     VkFormatFeatureFlags features = 0;
     if (usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
         features |= VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
@@ -104,14 +168,22 @@ std::optional<VkFormat> get_supported_format(lava::device_ptr device, const lava
     return std::nullopt;
 }
 
-bool one_time_command_buffer(lava::device_ptr device, VkCommandPool pool, lava::device::queue::ref queue, std::function<void(VkCommandBuffer)> callback) {
+VkDeviceAddress get_buffer_address(lava::device_ptr device, lava::buffer::ptr buffer) {
+    const VkBufferDeviceAddressInfoKHR addr_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
+        .buffer = buffer->get()
+    };
+    return device->call().vkGetBufferDeviceAddressKHR(device->get(), &addr_info);
+}
+
+bool one_time_command_buffer(device_ptr device, VkCommandPool pool, device::queue::ref queue, std::function<void(VkCommandBuffer)> callback) {
     VkCommandBuffer cmd_buf = VK_NULL_HANDLE;
     if (!device->vkAllocateCommandBuffers(
             pool, 1, &cmd_buf, VK_COMMAND_BUFFER_LEVEL_PRIMARY))
         return false;
     const VkCommandBufferBeginInfo begin_info = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                                   .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-    if (lava::failed(device->call().vkBeginCommandBuffer(cmd_buf, &begin_info)))
+    if (!check(device->call().vkBeginCommandBuffer(cmd_buf, &begin_info)))
         return false;
 
     callback(cmd_buf);
@@ -137,4 +209,49 @@ bool one_time_command_buffer(lava::device_ptr device, VkCommandPool pool, lava::
     device->vkFreeCommandBuffers(pool, 1, &cmd_buf);
 
     return true;
+}
+
+custom_flags_allocator::custom_flags_allocator(VkPhysicalDevice physical_device, VkDevice device, VmaAllocatorCreateFlags flags)
+: allocator(physical_device, device) {
+    VmaVulkanFunctions vulkan_function {
+        .vkGetPhysicalDeviceProperties = vkGetPhysicalDeviceProperties,
+        .vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties,
+        .vkAllocateMemory = vkAllocateMemory,
+        .vkFreeMemory = vkFreeMemory,
+        .vkMapMemory = vkMapMemory,
+        .vkUnmapMemory = vkUnmapMemory,
+        .vkFlushMappedMemoryRanges = vkFlushMappedMemoryRanges,
+        .vkInvalidateMappedMemoryRanges = vkInvalidateMappedMemoryRanges,
+        .vkBindBufferMemory = vkBindBufferMemory,
+        .vkBindImageMemory = vkBindImageMemory,
+        .vkGetBufferMemoryRequirements = vkGetBufferMemoryRequirements,
+        .vkGetImageMemoryRequirements = vkGetImageMemoryRequirements,
+        .vkCreateBuffer = vkCreateBuffer,
+        .vkDestroyBuffer = vkDestroyBuffer,
+        .vkCreateImage = vkCreateImage,
+        .vkDestroyImage = vkDestroyImage,
+        .vkCmdCopyBuffer = vkCmdCopyBuffer,
+#if VMA_DEDICATED_ALLOCATION
+        .vkGetBufferMemoryRequirements2KHR = vkGetBufferMemoryRequirements2KHR,
+        .vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2KHR,
+#endif
+#if VMA_BIND_MEMORY2
+        .vkBindBufferMemory2KHR = vkBindBufferMemory2KHR,
+        .vkBindImageMemory2KHR = vkBindImageMemory2KHR,
+#endif
+#if VMA_MEMORY_BUDGET
+        .vkGetPhysicalDeviceMemoryProperties2KHR = vkGetPhysicalDeviceMemoryProperties2KHR
+#endif
+    };
+
+    VmaAllocatorCreateInfo allocator_info {
+        .flags = flags,
+        .physicalDevice = physical_device,
+        .device = device,
+        .pAllocationCallbacks = memory::alloc(),
+        .pVulkanFunctions = &vulkan_function,
+        .instance = instance::get(),
+    };
+
+    check(vmaCreateAllocator(&allocator_info, &vma_allocator));
 }
