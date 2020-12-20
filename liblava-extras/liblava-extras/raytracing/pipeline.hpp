@@ -40,8 +40,10 @@ namespace lava {
                     shader_stages.clear();
                 }
 
-                // convenience function for triangle hit groups, don't use if you want procedural hit groups
-                void add_shader_group(VkShaderStageFlagBits stage, uint32_t index);
+                // raygen or miss or callable
+                void add_shader_general_group(uint32_t index);
+                // any combination of closest hit, any hit, intersection
+                void add_shader_hit_group(uint32_t closest_hit_index, uint32_t any_hit_index = VK_SHADER_UNUSED_KHR, uint32_t intersection_index = VK_SHADER_UNUSED_KHR);
                 void add_shader_group(const VkRayTracingShaderGroupCreateInfoKHR& shader_group) {
                     shader_groups.push_back(shader_group);
                 }

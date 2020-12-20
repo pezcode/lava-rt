@@ -33,37 +33,24 @@ namespace lava {
                 return true;
             }
 
-            void raytracing_pipeline::add_shader_group(VkShaderStageFlagBits stage, uint32_t index) {
-                VkRayTracingShaderGroupCreateInfoKHR create_info = {
+            void raytracing_pipeline::add_shader_general_group(uint32_t index) {
+                add_shader_group({ .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+                                   .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+                                   .generalShader = index,
+                                   .closestHitShader = VK_SHADER_UNUSED_KHR,
+                                   .anyHitShader = VK_SHADER_UNUSED_KHR,
+                                   .intersectionShader = VK_SHADER_UNUSED_KHR });
+            }
+
+            void raytracing_pipeline::add_shader_hit_group(uint32_t closest_hit_index, uint32_t any_hit_index, uint32_t intersection_index) {
+                add_shader_group({
                     .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
-                    .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+                    .type = intersection_index == VK_SHADER_UNUSED_KHR ? VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR : VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR,
                     .generalShader = VK_SHADER_UNUSED_KHR,
-                    .closestHitShader = VK_SHADER_UNUSED_KHR,
-                    .anyHitShader = VK_SHADER_UNUSED_KHR,
-                    .intersectionShader = VK_SHADER_UNUSED_KHR,
-                };
-
-                switch (stage) {
-                case VK_SHADER_STAGE_RAYGEN_BIT_KHR:
-                case VK_SHADER_STAGE_MISS_BIT_KHR:
-                    create_info.generalShader = index;
-                    break;
-                case VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR:
-                    create_info.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-                    create_info.closestHitShader = index;
-                    break;
-                case VK_SHADER_STAGE_ANY_HIT_BIT_KHR:
-                    create_info.anyHitShader = index;
-                    break;
-                case VK_SHADER_STAGE_INTERSECTION_BIT_KHR:
-                    create_info.intersectionShader = index;
-                    break;
-                default:
-                    assert(0 && "Unsupported shader stage");
-                    break;
-                }
-
-                add_shader_group(create_info);
+                    .closestHitShader = closest_hit_index,
+                    .anyHitShader = any_hit_index,
+                    .intersectionShader = intersection_index,
+                });
             }
 
             void raytracing_pipeline::copy_to(raytracing_pipeline* target) const {

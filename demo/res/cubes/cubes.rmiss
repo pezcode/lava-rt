@@ -12,4 +12,5 @@ layout (std140, set = 0, binding = 0) uniform ubo_uniforms {
 
 void main() {
     payload.color = uniforms.background_color;
+    payload.finished = true;
 }

@@ -19,6 +19,7 @@ set(CUBES_SHADERS
         res/cubes/cubes.rgen
         res/cubes/cubes.rchit
         res/cubes/cubes.rmiss
+        res/cubes/cubes.rcall
         res/cubes/cubes.vert
         res/cubes/cubes.frag
         res/cubes/cubes.inc

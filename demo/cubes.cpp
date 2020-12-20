@@ -1,4 +1,5 @@
 #include <imgui.h>
+#include <algorithm>
 #include <demo.hpp>
 
 using namespace lava;
@@ -8,7 +9,8 @@ struct uniform_data {
     glm::mat4 inv_view;
     glm::mat4 inv_proj;
     glm::uvec4 viewport;
-    glm::vec3 background_color;
+    glm::vec4 background_color;
+    uint32_t max_depth;
 } uniforms;
 
 struct instance_data {
@@ -20,7 +22,7 @@ struct instance_data {
 
 int main(int argc, char* argv[]) {
     frame_config config;
-    config.app = "lava raytracing cubes";
+    config.app = "lava ray tracing cubes";
     config.cmd_line = { argc, argv };
     config.app_info.req_api_version = instance::api_version::v1_1;
 
@@ -45,8 +47,10 @@ int main(int argc, char* argv[]) {
     std::vector<vertex> vertices;
     std::vector<index> indices;
 
+    // combined vertex and index buffers for all meshes
+
     constexpr size_t INSTANCE_COUNT = 2;
-    const std::array<glm::vec3, INSTANCE_COUNT> instance_colors = {
+    const glm::vec3 instance_colors[INSTANCE_COUNT] = {
         glm::vec3(0.812f, 0.063f, 0.125f),
         glm::vec3(0.063f, 0.812f, 0.749f)
     };
@@ -95,13 +99,13 @@ int main(int argc, char* argv[]) {
     image::ptr output_image;
 
     // catch swapchain recreation
-    // recreate raytracing image and descriptor sets
+    // recreate raytracing image and update its descriptors
     target_callback swapchain_callback;
 
     swapchain_callback.on_created =
         [&](VkAttachmentsRef, rect area) {
             const glm::uvec2 size = area.get_size();
-            uniforms.inv_proj = glm::inverse(glm::perspectiveLH_ZO(glm::radians(90.0f), float(size.x) / size.y, 0.1f, 5.0f));
+            uniforms.inv_proj = glm::inverse(perspective_matrix(size, 90.0f, 5.0f));
             uniforms.viewport = { area.get_origin(), size };
 
             if (!output_image->create(app.device, size))
@@ -118,6 +122,7 @@ int main(int argc, char* argv[]) {
                                                       .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                       .pImageInfo = &image_info };
             app.device->vkUpdateDescriptorSets({ write_info });
+
             // transition image to general layout
             return one_time_command_buffer(
                 app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
@@ -134,18 +139,21 @@ int main(int argc, char* argv[]) {
     app.target->add_callback(&swapchain_callback);
 
     app.on_create = [&]() {
+        // command pool for one-time command buffers
         const VkCommandPoolCreateInfo create_info = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                                       .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
                                                       .queueFamilyIndex = uint32_t(app.device->graphics_queue().family) };
         if (!app.device->vkCreateCommandPool(&create_info, &pool))
             return false;
 
+        // uniform buffer for camera parameters and background color
         uniform_buffer = make_buffer();
         if (!uniform_buffer->create_mapped(app.device, nullptr, sizeof(uniform_data), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
             return false;
 
+        // output image for the raytracing shader
         const VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        // TODO how does image2D layout format tie into this? it doesn't seem to convert between formats of different sizes
+        // TODO how does image2D layout format tie into this? GLSL buffer format seem to convert between formats of different sizes
         std::optional<VkFormat> format = get_supported_format(app.device, { VK_FORMAT_R16G16B16A16_SFLOAT /*, VK_FORMAT_R32G32B32A32_SFLOAT*/ }, usage);
         if (!format.has_value())
             return false;
@@ -155,6 +163,7 @@ int main(int argc, char* argv[]) {
         output_image->set_layout(VK_IMAGE_LAYOUT_UNDEFINED);
         output_image->set_aspect_mask(format_aspect_mask(*format));
 
+        // descriptor set used by the raytracing shaders and the blit shader
         shared_descriptor_set_layout = make_descriptor();
         shared_descriptor_set_layout->add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR);
         shared_descriptor_set_layout->add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR);
@@ -163,16 +172,19 @@ int main(int argc, char* argv[]) {
 
         shared_descriptor_set = shared_descriptor_set_layout->allocate();
 
+        // blit pipeline that draws the raytraced output image to the swapchain
         blit_pipeline_layout = make_pipeline_layout();
         blit_pipeline_layout->add(shared_descriptor_set_layout);
         if (!blit_pipeline_layout->create(app.device))
             return false;
 
         blit_pipeline = make_graphics_pipeline(app.device);
+
         if (!blit_pipeline->add_shader(file_data("cubes/vert.spv"), VK_SHADER_STAGE_VERTEX_BIT))
             return false;
         if (!blit_pipeline->add_shader(file_data("cubes/frag.spv"), VK_SHADER_STAGE_FRAGMENT_BIT))
             return false;
+
         blit_pipeline->add_color_blend_attachment();
         blit_pipeline->set_layout(blit_pipeline_layout);
 
@@ -182,13 +194,15 @@ int main(int argc, char* argv[]) {
 
         blit_pipeline->on_process = [&](VkCommandBuffer cmd_buf) {
             app.device->call().vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_pipeline_layout->get(), 0, 1, &shared_descriptor_set, 0, nullptr);
-
+            // fullscreen triangle
+            // no vertex buffer, attributes are generated in the vertex shader
             app.device->call().vkCmdDraw(cmd_buf, 3, 1, 0, 0);
         };
 
-        // add blit before gui
+        // add blit before lava's gui rendering
         render_pass->add_front(blit_pipeline);
 
+        // descriptor used by the raytracing shader
         raytracing_descriptor_set_layout = make_descriptor();
         raytracing_descriptor_set_layout->add_binding(0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
         raytracing_descriptor_set_layout->add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
@@ -205,8 +219,7 @@ int main(int argc, char* argv[]) {
 
         raytracing_descriptor_set = raytracing_descriptor_set_layout->allocate();
 
-        // create raytracing pipeline
-
+        // raytracing pipeline with raygen, miss and closest-hit shader
         raytracing_pipeline = make_raytracing_pipeline(app.device);
 
         if (!raytracing_pipeline->add_shader(file_data("cubes/rgen.spv"), VK_SHADER_STAGE_RAYGEN_BIT_KHR))
@@ -215,17 +228,22 @@ int main(int argc, char* argv[]) {
             return false;
         if (!raytracing_pipeline->add_shader(file_data("cubes/rchit.spv"), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR))
             return false;
+        if (!raytracing_pipeline->add_shader(file_data("cubes/rcall.spv"), VK_SHADER_STAGE_CALLABLE_BIT_KHR))
+            return false;
 
         enum rt_stage : uint32_t {
             // this reflects the order they're added in above
             raygen = 0,
             miss,
             closest_hit,
+            callable
         };
 
-        raytracing_pipeline->add_shader_group(VK_SHADER_STAGE_RAYGEN_BIT_KHR, raygen);
-        raytracing_pipeline->add_shader_group(VK_SHADER_STAGE_MISS_BIT_KHR, miss);
-        raytracing_pipeline->add_shader_group(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, closest_hit);
+        // shader_binding_table expects the groups to be in this order
+        raytracing_pipeline->add_shader_general_group(raygen);
+        raytracing_pipeline->add_shader_general_group(miss);
+        raytracing_pipeline->add_shader_hit_group(closest_hit);
+        raytracing_pipeline->add_shader_general_group(callable);
 
         raytracing_pipeline->set_max_recursion_depth(1);
         raytracing_pipeline->set_layout(raytracing_pipeline_layout);
@@ -233,9 +251,19 @@ int main(int argc, char* argv[]) {
         if (!raytracing_pipeline->create())
             return false;
 
-        shader_binding = make_shader_binding_table();
+        // shader binding table
 
-        if (!shader_binding->create(raytracing_pipeline))
+        // shaderRecordEXT buffer data for the callable shader
+        // directional light vector for diffuse lighting
+        struct callable_record_data {
+            glm::vec3 direction = { 0.0f, 0.0f, 1.0f };
+        } callable_record;
+
+        std::vector records(raytracing_pipeline->get_shader_groups().size(), data(nullptr, 0));
+        records[callable] = data(&callable_record, sizeof(callable_record));
+
+        shader_binding = make_shader_binding_table();
+        if (!shader_binding->create(raytracing_pipeline, records))
             return false;
 
         // ideally, these buffers would all be device-local (VMA_MEMORY_USAGE_GPU_ONLY) but to keep the demo code short they're host-visible to skip a staging buffer copy
@@ -256,42 +284,45 @@ int main(int argc, char* argv[]) {
         // - a BLAS (bottom level) for each mesh
         // - one TLAS (top level) referencing all the BLAS
 
-        bool compact = true;
+        constexpr bool COMPACT_BLAS = true;
 
         top_as = make_top_level_acceleration_structure();
-        top_as->set_allow_updates(true);
 
-        size_t scratch_buffer_size = 0;
+        // buffer data, common to all BLAS
+        const VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+                                                                            .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
+                                                                            .vertexData = vertex_buffer_address,
+                                                                            .vertexStride = sizeof(vertex),
+                                                                            .maxVertex = uint32_t(vertices.size()),
+                                                                            .indexType = VK_INDEX_TYPE_UINT32,
+                                                                            .indexData = index_buffer_address };
+
+        VkDeviceSize scratch_buffer_size = 0;
 
         for (size_t i = 0; i < instances.size(); i++) {
             const instance_data& instance = instances[i];
-            bottom_level_acceleration_structure::ptr bottom_as = make_bottom_level_acceleration_structure();
-            bottom_as->set_allow_compaction(compact);
-            const VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
-                                                                                .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-                                                                                .vertexData = vertex_buffer_address,
-                                                                                .vertexStride = sizeof(vertex),
-                                                                                .maxVertex = instance.vertex_count,
-                                                                                .indexType = VK_INDEX_TYPE_UINT32,
-                                                                                .indexData = index_buffer_address };
+            // per-mesh sub-buffer region
             const VkAccelerationStructureBuildRangeInfoKHR range = {
                 .primitiveCount = instance.index_count / 3,
                 .primitiveOffset = instance.index_base * sizeof(index), // this is in bytes
-                .firstVertex = instance.vertex_base // this is an index...
+                .firstVertex = instance.vertex_base // but this is an index...
             };
-            bottom_as->add_geometry(triangles, range);
-            if (!bottom_as->create(app.device))
+
+            bottom_level_acceleration_structure::ptr bottom_as = make_bottom_level_acceleration_structure();
+            bottom_as->add_geometry(triangles, range, VK_GEOMETRY_OPAQUE_BIT_KHR);
+
+            if (!bottom_as->create(app.device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | (COMPACT_BLAS ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR : 0)))
                 return false;
             bottom_as_list.push_back(bottom_as);
-            top_as->add_instance(bottom_as);
             scratch_buffer_size = std::max(scratch_buffer_size, bottom_as->scratch_buffer_size());
+
+            top_as->add_instance(bottom_as);
         }
 
-        if (!top_as->create(app.device))
+        if (!top_as->create(app.device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR))
             return false;
 
         scratch_buffer_size = std::max(scratch_buffer_size, top_as->scratch_buffer_size());
-
         scratch_buffer = make_buffer();
         if (!scratch_buffer->create(app.device, nullptr, scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR))
             return false;
@@ -311,14 +342,14 @@ int main(int argc, char* argv[]) {
                 bottom_as_list[i]->build(cmd_buf, scratch_buffer_address);
                 app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst, 0, 1, &barrier, 0, 0, 0, 0);
             }
-            //top_as->build(cmd_buf, scratch_buffer_address);
-            app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst /* | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR*/, 0, 1, &barrier, 0, 0, 0, 0);
+            top_as->build(cmd_buf, scratch_buffer_address);
+            app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &barrier, 0, 0, 0, 0);
         });
 
         // compact BLAS
-        // building must be finished to retrieve the compacted size, or vkGetQueryPoolResults will time out!
+        // building must be finished to retrieve the compacted size, or vkGetQueryPoolResults will time out
 
-        if (compact) {
+        if (COMPACT_BLAS) {
             std::vector<bottom_level_acceleration_structure::ptr> compacted_bottom_as_list;
 
             one_time_command_buffer(app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
@@ -335,14 +366,14 @@ int main(int argc, char* argv[]) {
                     top_as->update_instance(i, compacted_bottom_as_list[i]);
                 }
                 app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst, 0, 1, &barrier, 0, 0, 0, 0);
-                top_as->build(cmd_buf, scratch_buffer_address);
+                top_as->update(cmd_buf, scratch_buffer_address);
                 app.device->call().vkCmdPipelineBarrier(cmd_buf, src, dst | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &barrier, 0, 0, 0, 0);
             });
 
             bottom_as_list = compacted_bottom_as_list;
         }
 
-        // update descriptors
+        // write descriptors
 
         std::vector<VkWriteDescriptorSet> write_sets;
 
@@ -392,10 +423,11 @@ int main(int argc, char* argv[]) {
 
         glm::uvec2 size = app.target->get_size();
 
-        uniforms.inv_view = glm::inverse(glm::mat4(1.0f));
-        uniforms.inv_proj = glm::inverse(glm::perspectiveLH_ZO(glm::radians(90.0f), float(size.x) / size.y, 0.1f, 5.0f));
+        uniforms.inv_view = glm::inverse(glm::lookAtLH(glm::vec3(0.75f, 0.25f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)));
+        uniforms.inv_proj = glm::inverse(perspective_matrix(size, 90.0f, 5.0f));
         uniforms.viewport = { 0, 0, size };
-        uniforms.background_color = render_pass->get_clear_color();
+        uniforms.background_color = { render_pass->get_clear_color(), 1.0f };
+        uniforms.max_depth = 4;
 
         swapchain_callback.on_created({}, { { 0, 0 }, size });
 
@@ -435,8 +467,8 @@ int main(int argc, char* argv[]) {
 
     app.on_update = [&](delta dt) {
         for (size_t i = 0; i < INSTANCE_COUNT; i++) {
-            glm::vec3 pos = { (2.0f * i - 1) * 0.5f, 0.0f, 2.0f };
-            float angle = glm::radians(15.0f) * float(to_sec(now())) * (i + 1);
+            glm::vec3 pos = { (2.0f * i - 1) * 0.5f, 0.0f, i * 0.5f };
+            float angle = glm::radians(15.0f) * float(to_sec(now())) * i;
             glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * glm::rotate(glm::mat4(1.0f), angle, { 0.0f, 1.0f, 0.0 });
             top_as->set_instance_transform(i, transform);
         }
@@ -457,7 +489,7 @@ int main(int argc, char* argv[]) {
         // wait for the last trace
         app.device->call().vkCmdPipelineBarrier(cmd_buf, use, build, 0, 0, nullptr, 0, nullptr, 0, nullptr);
 
-        top_as->build(cmd_buf, scratch_buffer_address);
+        top_as->update(cmd_buf, scratch_buffer_address);
 
         // wait for update to finish before the next trace
         const VkMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -493,9 +525,12 @@ int main(int argc, char* argv[]) {
 
     app.gui.on_draw = [&]() {
         ImGui::SetNextWindowPos(ImVec2(30, 30), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(193, 90), ImGuiCond_FirstUseEver);
 
         ImGui::Begin(app.get_name());
+
+        // TODO per-frame uniform data would require a dynamic uniform buffer with correct alignment
+        //ImGui::SetNextItemWidth(ImGui::GetWindowSize().x * 0.5f);
+        //ImGui::SliderInt("Max ray depth", (int*)&uniforms.max_depth, 0, 5);
 
         app.draw_about(false);
 

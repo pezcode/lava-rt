@@ -5,7 +5,8 @@ struct uniform_data {
     mat4 inv_view;
     mat4 inv_proj;
     uvec4 viewport;
-    vec3 background_color;
+    vec4 background_color;
+    uint max_depth;
 };
 
 #ifdef HIT_SHADER
@@ -57,8 +58,8 @@ vertex get_vertex(triangle tri, vec2 bary_coord) {
     v.uv = bary_lerp(tri.v0.uv, tri.v1.uv, tri.v2.uv, barycentrics);
 
     vec3 normal = bary_lerp(tri.v0.normal, tri.v1.normal, tri.v2.normal, barycentrics);
-    // TODO use correct normal matrix
-    v.normal = gl_ObjectToWorldEXT * vec4(normal, 0.0);
+    // no need for normal matrix, we have no anisotropic scaling in our transforms
+    v.normal = normalize(gl_ObjectToWorldEXT * vec4(normal, 0.0));
 
     return v;
 }
@@ -66,7 +67,15 @@ vertex get_vertex(triangle tri, vec2 bary_coord) {
 #endif // HIT_SHADER
 
 struct ray_payload {
-    vec3 color;
+    vec4 color;
+    bool finished;
+    vec3 position;
+    vec3 direction;
+};
+
+struct callable_payload {
+    vec4 color;
+    vec3 normal;
 };
 
 #endif // CUBES_INC_HEADER_GUARD

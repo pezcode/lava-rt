@@ -6,36 +6,32 @@ namespace lava {
         namespace raytracing {
 
             acceleration_structure::acceleration_structure()
-            : create_info({ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR }),
-              build_info({ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR }),
-              allow_updates(false),
-              allow_compaction(false) {
+            : properties({ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR }),
+              create_info({ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR }),
+              build_info({ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR }) {
             }
 
-            bool acceleration_structure::create_internal(device_ptr dev) {
+            bool acceleration_structure::create_internal(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 device = dev;
 
-                VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR; // TODO
-                if (allow_updates)
-                    flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-                if (allow_compaction)
-                    flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+                VkPhysicalDeviceProperties2 properties2 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+                                                            .pNext = &properties };
+                vkGetPhysicalDeviceProperties2(device->get_vk_physical_device(), &properties2);
 
                 build_info.type = create_info.type;
                 build_info.flags = flags;
 
-                VkDeviceSize structure_size = compact_size;
-                if (structure_size <= 0) {
-                    const VkAccelerationStructureBuildSizesInfoKHR sizes = get_sizes();
-                    structure_size = sizes.accelerationStructureSize;
+                if (compact_size > 0) {
+                    // set by compact() before calling create() on the new AS
+                    create_info.size = compact_size;
+                } else {
+                    create_info.size = get_sizes().accelerationStructureSize;
                 }
 
                 as_buffer = make_buffer();
-                if (!as_buffer->create(device, nullptr, structure_size, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
+                if (!as_buffer->create(device, nullptr, create_info.size, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                     return false;
-
                 create_info.buffer = as_buffer->get();
-                create_info.size = structure_size;
 
                 if (!check(vkCreateAccelerationStructureKHR(device->get(), &create_info, memory::alloc(), &handle)))
                     return false;
@@ -46,15 +42,13 @@ namespace lava {
                 };
                 address = device->call().vkGetAccelerationStructureDeviceAddressKHR(device->get(), &address_info);
 
-                if (allow_compaction) {
-                    const VkQueryPoolCreateInfo pool_info = {
-                        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-                        .queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-                        .queryCount = 1
-                    };
+                const VkQueryPoolCreateInfo pool_info = {
+                    .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+                    .queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+                    .queryCount = 1
+                };
 
-                    check(vkCreateQueryPool(device->get(), &pool_info, memory::alloc(), &query_pool));
-                }
+                check(vkCreateQueryPool(device->get(), &pool_info, memory::alloc(), &query_pool));
 
                 return true;
             }
@@ -84,17 +78,16 @@ namespace lava {
 
             VkDeviceSize acceleration_structure::scratch_buffer_size() const {
                 const VkAccelerationStructureBuildSizesInfoKHR sizes = get_sizes();
-                return std::max(sizes.buildScratchSize, allow_updates ? sizes.updateScratchSize : 0);
+                return std::max(sizes.buildScratchSize, sizes.updateScratchSize);
             }
 
             bool acceleration_structure::build(VkCommandBuffer cmd_buf, VkDeviceAddress scratch_buffer) {
                 if (handle == VK_NULL_HANDLE)
                     return false;
-
-                bool update = allow_updates && built;
-
-                build_info.mode = update ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-                build_info.srcAccelerationStructure = update ? handle : VK_NULL_HANDLE;
+                if (built && !(build_info.flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR))
+                    return false;
+                build_info.mode = built ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+                build_info.srcAccelerationStructure = built ? handle : VK_NULL_HANDLE;
                 build_info.dstAccelerationStructure = handle;
                 build_info.geometryCount = uint32_t(geometries.size());
                 build_info.pGeometries = geometries.data();
@@ -105,7 +98,7 @@ namespace lava {
                 device->call().vkCmdBuildAccelerationStructuresKHR(cmd_buf, 1, &build_info, &build_ranges);
                 built = true;
 
-                if (allow_compaction) {
+                if (build_info.flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR) {
                     const VkMemoryBarrier barrier = {
                         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                         .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
@@ -121,7 +114,9 @@ namespace lava {
             }
 
             acceleration_structure::ptr acceleration_structure::compact(VkCommandBuffer cmd_buf) {
-                if (!allow_compaction)
+                if (!built)
+                    return nullptr;
+                if (!(build_info.flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR))
                     return nullptr;
 
                 acceleration_structure::ptr new_structure = nullptr;
@@ -132,8 +127,7 @@ namespace lava {
                 else
                     return nullptr;
 
-                new_structure->allow_updates = allow_updates;
-                new_structure->allow_compaction = allow_compaction;
+                new_structure->build_info = build_info;
                 new_structure->geometries = geometries;
                 new_structure->ranges = ranges;
                 new_structure->built = built;
@@ -154,17 +148,14 @@ namespace lava {
                 return new_structure;
             }
 
-            void acceleration_structure::add_geometry(const VkAccelerationStructureGeometryDataKHR& geometry_data, VkGeometryTypeKHR type, const VkAccelerationStructureBuildRangeInfoKHR& range) {
-                bool opaque = true; // TODO
-                VkGeometryFlagsKHR flags = 0;
-                if (opaque)
-                    flags |= VK_GEOMETRY_OPAQUE_BIT_KHR;
+            void acceleration_structure::add_geometry(const VkAccelerationStructureGeometryDataKHR& geometry_data, VkGeometryTypeKHR type, const VkAccelerationStructureBuildRangeInfoKHR& range, VkGeometryFlagsKHR flags) {
+                if (built)
+                    return;
 
                 geometries.push_back({ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
                                        .geometryType = type,
                                        .geometry = geometry_data,
                                        .flags = flags });
-
                 ranges.push_back(range);
             }
 
@@ -172,7 +163,7 @@ namespace lava {
                 build_info.pGeometries = geometries.data();
                 build_info.geometryCount = uint32_t(geometries.size());
 
-                const VkAccelerationStructureBuildTypeKHR build_type = VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR; // HOST_OR_DEVICE_KHR?
+                const VkAccelerationStructureBuildTypeKHR build_type = VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR;
                 std::vector<uint32_t> primitive_counts(ranges.size());
                 std::transform(ranges.begin(), ranges.end(), primitive_counts.begin(),
                                [](const VkAccelerationStructureBuildRangeInfoKHR& r) { return r.primitiveCount; });
@@ -184,9 +175,9 @@ namespace lava {
                 return info;
             }
 
-            bool bottom_level_acceleration_structure::create(device_ptr dev) {
+            bool bottom_level_acceleration_structure::create(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-                return create_internal(dev);
+                return create_internal(dev, flags);
             }
 
             void bottom_level_acceleration_structure::clear_geometries() {
@@ -194,7 +185,7 @@ namespace lava {
                 ranges.clear();
             }
 
-            bool top_level_acceleration_structure::create(device_ptr dev) {
+            bool top_level_acceleration_structure::create(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 device = dev;
 
                 if (!instance_buffer.create_mapped(device, instances.data(), sizeof(decltype(instances)::value_type) * instances.size(),
@@ -220,7 +211,7 @@ namespace lava {
                 add_geometry(geometry, VK_GEOMETRY_TYPE_INSTANCES_KHR, range);
 
                 create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-                return create_internal(dev);
+                return create_internal(dev, flags);
             }
 
             void top_level_acceleration_structure::destroy() {
@@ -229,27 +220,50 @@ namespace lava {
                 acceleration_structure::destroy();
             }
 
-            void top_level_acceleration_structure::add_instance(bottom_level_acceleration_structure::ptr as, index custom_index, const glm::mat4x3& transform) {
-                instances.push_back({});
-                update_instance(instances.size() - 1, as, custom_index, transform);
+            void top_level_acceleration_structure::add_instance(const VkAccelerationStructureInstanceKHR& instance) {
+                if (built)
+                    return;
+                instances.push_back(instance);
             }
 
-            void top_level_acceleration_structure::update_instance(index i, bottom_level_acceleration_structure::ptr blas, index custom_index, const glm::mat4x3& transform) {
+            void top_level_acceleration_structure::add_instance(bottom_level_acceleration_structure::ptr blas) {
+                if (built)
+                    return;
+                instances.push_back({ .transform = *reinterpret_cast<const VkTransformMatrixKHR*>(glm::value_ptr(glm::identity<glm::mat4x3>())),
+                                      .mask = ~0u,
+                                      .accelerationStructureReference = blas->get_address() });
+            }
+
+            void top_level_acceleration_structure::update_instance(index i, const VkAccelerationStructureInstanceKHR& instance) {
                 if (i < instances.size()) {
-                    instances[i] = { .transform = *reinterpret_cast<const VkTransformMatrixKHR*>(glm::value_ptr(glm::transpose(transform))),
-                                     .instanceCustomIndex = custom_index,
-                                     .mask = ~0u,
-                                     .instanceShaderBindingTableRecordOffset = 0u,
-                                     .flags = 0u, // TODO
-                                     .accelerationStructureReference = blas->get_address() };
+                    instances[i] = instance;
+                    if (instance_buffer.valid()) {
+                        VkAccelerationStructureInstanceKHR* buffer_instances = static_cast<VkAccelerationStructureInstanceKHR*>(instance_buffer.get_mapped_data());
+                        buffer_instances[i] = instance;
+                    }
+                }
+            }
+
+            void top_level_acceleration_structure::update_instance(index i, bottom_level_acceleration_structure::ptr blas) {
+                if (i < instances.size()) {
+                    instances[i].accelerationStructureReference = blas->get_address();
+                    if (instance_buffer.valid()) {
+                        VkAccelerationStructureInstanceKHR* buffer_instances = static_cast<VkAccelerationStructureInstanceKHR*>(instance_buffer.get_mapped_data());
+                        buffer_instances[i].accelerationStructureReference = blas->get_address();
+                    }
                 }
             }
 
             void top_level_acceleration_structure::set_instance_transform(index i, const glm::mat4x3& transform) {
                 static_assert(sizeof(glm::mat4x3) == sizeof(VkTransformMatrixKHR::matrix));
-                if (i < instances.size() && instance_buffer.valid()) {
-                    VkAccelerationStructureInstanceKHR* data = static_cast<VkAccelerationStructureInstanceKHR*>(instance_buffer.get_mapped_data());
-                    data[i].transform = *reinterpret_cast<const VkTransformMatrixKHR*>(glm::value_ptr(glm::transpose(transform)));
+                if (i < instances.size()) {
+                    const glm::mat3x4 transposed = glm::transpose(transform);
+                    const VkTransformMatrixKHR& transform_ref = *reinterpret_cast<const VkTransformMatrixKHR*>(glm::value_ptr(transposed));
+                    instances[i].transform = transform_ref;
+                    if (instance_buffer.valid()) {
+                        VkAccelerationStructureInstanceKHR* buffer_instances = static_cast<VkAccelerationStructureInstanceKHR*>(instance_buffer.get_mapped_data());
+                        buffer_instances[i].transform = transform_ref;
+                    }
                 }
             }
 

@@ -33,6 +33,9 @@ layout (scalar, set = 1, binding = 3) restrict readonly buffer sso_indices {
 // output of this shader
 layout (location = 0) rayPayloadInEXT ray_payload payload;
 
+// input/output of the callable shader
+layout(location = 1) callableDataEXT callable_payload lighting_payload;
+
 triangle get_triangle(instance ins, uint primitive) {
     uint index_offset = ins.index_base + (primitive * 3);
 
@@ -53,5 +56,17 @@ void main() {
     instance ins = instances[gl_InstanceID];
     triangle tri = get_triangle(ins, gl_PrimitiveID);
     vertex v = get_vertex(tri, barycentric_coord);
-    payload.color = v.color.rgb;
+
+    // we could calculate lighting in this closest-hit shader
+    // this is just for demonstration purposes
+    lighting_payload.color = v.color;
+    lighting_payload.normal = v.normal;
+    executeCallableEXT(
+        0, // SBT callable index
+        1 // payload location
+        );
+
+    payload.color = lighting_payload.color;
+    payload.position = v.position + 0.0001 * v.normal;
+    payload.direction = reflect(gl_WorldRayDirectionEXT, v.normal);
 }

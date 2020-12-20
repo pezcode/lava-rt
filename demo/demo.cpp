@@ -3,7 +3,7 @@
 using namespace lava;
 
 device::ptr create_raytracing_device(device_manager& manager) {
-    for (const physical_device::ref physical_device : instance::singleton().get_physical_devices()) {
+    for (physical_device::ref physical_device : instance::singleton().get_physical_devices()) {
         const VkPhysicalDeviceProperties& properties = physical_device.get_properties();
         if (properties.apiVersion < VK_API_VERSION_1_1)
             continue;
@@ -81,10 +81,6 @@ device::ptr create_raytracing_device(device_manager& manager) {
         // allow unbounded runtime descriptor arrays in shader (but fixed at layout creation)
         features_descriptor_indexing.runtimeDescriptorArray = VK_TRUE;
 
-        // TODO remove
-        // allow variable descriptor array size for different sets
-        //features_descriptor_indexing.descriptorBindingVariableDescriptorCount = VK_TRUE;
-
         VkPhysicalDeviceRayTracingPipelineFeaturesKHR features_ray_tracing_pipeline = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR
         };
@@ -118,7 +114,7 @@ device::ptr create_raytracing_device(device_manager& manager) {
         // the Vulkan specs guarantee that a queue family exists with both if graphics operations are supported
         // TODO
         // use semaphore to synchronize
-        // deal with this properly with queue transitions (is this really needed? the image shouldn't be exclusive)
+        // deal with this properly with queue transitions (are images actually exclusive?)
         // or send a PR so lava always selects that queue by default
         if (!(physical_device.get_queue_family_properties()[device->get_graphics_queue().family]
                   .queueFlags
@@ -209,6 +205,13 @@ bool one_time_command_buffer(device_ptr device, VkCommandPool pool, device::queu
     device->vkFreeCommandBuffers(pool, 1, &cmd_buf);
 
     return true;
+}
+
+glm::mat4 perspective_matrix(uv2 size, float fov, float far_plane) {
+    // Vulkan NDC is right-handed with Y pointing down
+    // we flip Y which makes it left-handed
+    return glm::scale(glm::identity<glm::mat4>(), { 1.0f, -1.0f, 1.0f }) *
+        glm::perspectiveLH_ZO(glm::radians(fov), float(size.x) / size.y, 0.1f, far_plane);
 }
 
 custom_flags_allocator::custom_flags_allocator(VkPhysicalDevice physical_device, VkDevice device, VmaAllocatorCreateFlags flags)

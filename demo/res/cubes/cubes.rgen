@@ -23,16 +23,32 @@ void main() {
     vec4 target = uniforms.inv_proj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
     vec4 direction = uniforms.inv_view * vec4(normalize(target.xyz), 0.0);
 
-    traceRayEXT(top_level_as,
-        gl_RayFlagsOpaqueEXT,
-        0xff,
-        0, 0, 0,
-        cam_position.xyz,
-        0.001, // min distance
-        direction.xyz,
-        1000.0, // max distance
-        0 // payload location
-        );
+    payload.finished = false;
+    payload.position = cam_position.xyz;
+    payload.direction = direction.xyz;
 
-    imageStore(img_output, coords, vec4(payload.color, 1.0));
+    uint depth = 0;
+
+    vec4 color = vec4(0.0, 0.0, 0.0, 0.0);
+
+    while(!payload.finished && depth < uniforms.max_depth) {
+        traceRayEXT(
+            top_level_as,
+            gl_RayFlagsOpaqueEXT | gl_RayFlagsCullBackFacingTrianglesEXT,
+            0xff,
+            0, // SBT hit group index
+            0, // SBT record stride
+            0, // SBT miss index
+            payload.position,
+            0.001, // min distance
+            payload.direction,
+            5.0, // max distance
+            0 // payload location
+            );
+
+        color.rgb += payload.color.rgb; // specular reflection
+        depth++;
+    }
+
+    imageStore(img_output, coords, vec4(color.rgb, 1.0));
 }
