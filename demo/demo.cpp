@@ -2,6 +2,56 @@
 
 using namespace lava;
 
+// create allocator with custom VMA flags
+// we need VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT to take buffer device addresses
+allocator::ptr create_custom_allocator(device_ptr device, VmaAllocatorCreateFlags flags) {
+    const VmaVulkanFunctions vulkan_function = {
+        .vkGetPhysicalDeviceProperties = vkGetPhysicalDeviceProperties,
+        .vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties,
+        .vkAllocateMemory = vkAllocateMemory,
+        .vkFreeMemory = vkFreeMemory,
+        .vkMapMemory = vkMapMemory,
+        .vkUnmapMemory = vkUnmapMemory,
+        .vkFlushMappedMemoryRanges = vkFlushMappedMemoryRanges,
+        .vkInvalidateMappedMemoryRanges = vkInvalidateMappedMemoryRanges,
+        .vkBindBufferMemory = vkBindBufferMemory,
+        .vkBindImageMemory = vkBindImageMemory,
+        .vkGetBufferMemoryRequirements = vkGetBufferMemoryRequirements,
+        .vkGetImageMemoryRequirements = vkGetImageMemoryRequirements,
+        .vkCreateBuffer = vkCreateBuffer,
+        .vkDestroyBuffer = vkDestroyBuffer,
+        .vkCreateImage = vkCreateImage,
+        .vkDestroyImage = vkDestroyImage,
+        .vkCmdCopyBuffer = vkCmdCopyBuffer,
+#if VMA_DEDICATED_ALLOCATION
+        .vkGetBufferMemoryRequirements2KHR = vkGetBufferMemoryRequirements2KHR,
+        .vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2KHR,
+#endif
+#if VMA_BIND_MEMORY2
+        .vkBindBufferMemory2KHR = vkBindBufferMemory2KHR,
+        .vkBindImageMemory2KHR = vkBindImageMemory2KHR,
+#endif
+#if VMA_MEMORY_BUDGET
+        .vkGetPhysicalDeviceMemoryProperties2KHR = vkGetPhysicalDeviceMemoryProperties2KHR
+#endif
+    };
+
+    const VmaAllocatorCreateInfo allocator_info = {
+        .flags = flags,
+        .physicalDevice = device->get_vk_physical_device(),
+        .device = device->get(),
+        .pAllocationCallbacks = memory::alloc(),
+        .pVulkanFunctions = &vulkan_function,
+        .instance = instance::get(),
+    };
+
+    VmaAllocator vma_allocator = VK_NULL_HANDLE;
+    if (!check(vmaCreateAllocator(&allocator_info, &vma_allocator)))
+        return nullptr;
+
+    return std::make_shared<allocator>(vma_allocator);
+}
+
 device::ptr create_raytracing_device(device_manager& manager) {
     for (physical_device::ref physical_device : instance::singleton().get_physical_devices()) {
         const VkPhysicalDeviceProperties& properties = physical_device.get_properties();
@@ -126,8 +176,7 @@ device::ptr create_raytracing_device(device_manager& manager) {
         log()->info("using device: {} ({})", physical_device.get_properties().deviceName,
                     physical_device.get_device_type_string());
 
-        allocator::ptr alloc = make_custom_flags_allocator(physical_device.get(), device->get(), VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT);
-        device->set_allocator(alloc);
+        device->set_allocator(create_custom_allocator(device.get(), VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT));
 
         return device;
     }
@@ -212,49 +261,4 @@ glm::mat4 perspective_matrix(uv2 size, float fov, float far_plane) {
     // we flip Y which makes it left-handed
     return glm::scale(glm::identity<glm::mat4>(), { 1.0f, -1.0f, 1.0f }) *
         glm::perspectiveLH_ZO(glm::radians(fov), float(size.x) / size.y, 0.1f, far_plane);
-}
-
-custom_flags_allocator::custom_flags_allocator(VkPhysicalDevice physical_device, VkDevice device, VmaAllocatorCreateFlags flags)
-: allocator(physical_device, device) {
-    VmaVulkanFunctions vulkan_function {
-        .vkGetPhysicalDeviceProperties = vkGetPhysicalDeviceProperties,
-        .vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties,
-        .vkAllocateMemory = vkAllocateMemory,
-        .vkFreeMemory = vkFreeMemory,
-        .vkMapMemory = vkMapMemory,
-        .vkUnmapMemory = vkUnmapMemory,
-        .vkFlushMappedMemoryRanges = vkFlushMappedMemoryRanges,
-        .vkInvalidateMappedMemoryRanges = vkInvalidateMappedMemoryRanges,
-        .vkBindBufferMemory = vkBindBufferMemory,
-        .vkBindImageMemory = vkBindImageMemory,
-        .vkGetBufferMemoryRequirements = vkGetBufferMemoryRequirements,
-        .vkGetImageMemoryRequirements = vkGetImageMemoryRequirements,
-        .vkCreateBuffer = vkCreateBuffer,
-        .vkDestroyBuffer = vkDestroyBuffer,
-        .vkCreateImage = vkCreateImage,
-        .vkDestroyImage = vkDestroyImage,
-        .vkCmdCopyBuffer = vkCmdCopyBuffer,
-#if VMA_DEDICATED_ALLOCATION
-        .vkGetBufferMemoryRequirements2KHR = vkGetBufferMemoryRequirements2KHR,
-        .vkGetImageMemoryRequirements2KHR = vkGetImageMemoryRequirements2KHR,
-#endif
-#if VMA_BIND_MEMORY2
-        .vkBindBufferMemory2KHR = vkBindBufferMemory2KHR,
-        .vkBindImageMemory2KHR = vkBindImageMemory2KHR,
-#endif
-#if VMA_MEMORY_BUDGET
-        .vkGetPhysicalDeviceMemoryProperties2KHR = vkGetPhysicalDeviceMemoryProperties2KHR
-#endif
-    };
-
-    VmaAllocatorCreateInfo allocator_info{
-        .flags = flags,
-        .physicalDevice = physical_device,
-        .device = device,
-        .pAllocationCallbacks = memory::alloc(),
-        .pVulkanFunctions = &vulkan_function,
-        .instance = instance::get(),
-    };
-
-    check(vmaCreateAllocator(&allocator_info, &vma_allocator));
 }
