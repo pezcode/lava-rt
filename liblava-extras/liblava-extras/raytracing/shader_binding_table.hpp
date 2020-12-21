@@ -26,8 +26,8 @@ namespace lava {
                 bool create(raytracing_pipeline::ptr pipeline, std::vector<lava::data> records = std::vector<lava::data>()) {
                     lava::device_ptr device = pipeline->get_device();
 
-                    size_t group_counts[group_type::count] = {};
-                    size_t record_sizes[group_type::count] = {};
+                    size_t group_counts[group_type::count] = {}; // number of shader groups of each type
+                    size_t record_sizes[group_type::count] = {}; // largest record size per type, to calculate stride
 
                     // extract shader count and record size from group info and shader stages
 
@@ -87,26 +87,27 @@ namespace lava {
                     // shaderGroupBaseAlignment must be a multiple of shaderGroupHandleAlignment (or else you couldn't use the SBT base address as the first entry)
                     // so it's enough to round up the group entry size once we have an aligned SBT base address
 
-                    size_t strides[group_type::count] = {};
+                    size_t strides[group_type::count] = {}; // size of a shader group entry, must be the same for each type
+                    size_t sbt_sizes[group_type::count] = {}; // size of the entire SBT per type, this includes padding for alignment of the next group
 
                     size_t cur_group = 0;
                     std::vector<uint8_t> table_data;
                     for (size_t i = 0; i < group_type::count; i++) {
                         strides[i] = lava::align_up<VkDeviceSize>(handle_size + record_sizes[i], rt_properties.shaderGroupHandleAlignment);
+                        sbt_sizes[i] = lava::align_up<VkDeviceSize>(group_counts[i] * strides[i], rt_properties.shaderGroupBaseAlignment);
+                        size_t offset = table_data.size();
+                        table_data.insert(table_data.end(), sbt_sizes[i], 0);
                         for (size_t c = 0; c < group_counts[i]; c++) {
-                            size_t offset = table_data.size();
-                            table_data.insert(table_data.end(), strides[i], 0);
-
                             memcpy(&table_data[offset], &handles[cur_group * handle_size], handle_size);
                             if (records[cur_group].ptr) {
                                 memcpy(&table_data[offset + handle_size], records[cur_group].ptr, records[cur_group].size);
                             }
-
+                            offset += strides[i];
                             cur_group++;
                         }
                     }
 
-                    size_t possible_padding = group_type::count * (rt_properties.shaderGroupBaseAlignment - 1);
+                    size_t possible_padding = rt_properties.shaderGroupBaseAlignment - 1;
                     buffer = lava::make_buffer();
                     if (!buffer->create_mapped(device, nullptr, table_data.size() + possible_padding, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                         return false;
@@ -118,21 +119,17 @@ namespace lava {
                     VkDeviceAddress address = device->call().vkGetBufferDeviceAddressKHR(device->get(), &addr_info);
 
                     uint8_t* buffer_data = static_cast<uint8_t*>(buffer->get_mapped_data());
-                    size_t buffer_offset = 0;
-                    size_t data_offset = 0;
+                    size_t buffer_offset = lava::align_up<VkDeviceAddress>(address, rt_properties.shaderGroupBaseAlignment) - address;
+
+                    memcpy(&buffer_data[buffer_offset], table_data.data(), table_data.size());
 
                     for (size_t i = 0; i < group_type::count; i++) {
-                        buffer_offset = lava::align_up<VkDeviceAddress>(address + buffer_offset, rt_properties.shaderGroupBaseAlignment) - address;
-
                         regions[i] = {
                             .deviceAddress = address + buffer_offset,
                             .stride = strides[i],
                             .size = group_counts[i] * strides[i]
                         };
-
-                        memcpy(buffer_data + buffer_offset, table_data.data() + data_offset, regions[i].size);
-                        buffer_offset += regions[i].size;
-                        data_offset += regions[i].size;
+                        buffer_offset += sbt_sizes[i];
                     }
 
                     // TODO copy SBT to device-local memory
