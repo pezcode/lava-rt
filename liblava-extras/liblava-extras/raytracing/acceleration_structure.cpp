@@ -192,17 +192,11 @@ namespace lava {
                                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR))
                     return false;
 
-                const VkBufferDeviceAddressInfoKHR addr_info = {
-                    .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
-                    .buffer = instance_buffer.get()
-                };
-                VkDeviceAddress instance_buffer_address = device->call().vkGetBufferDeviceAddressKHR(device->get(), &addr_info);
-
                 const VkAccelerationStructureGeometryDataKHR geometry = {
                     .instances = {
                         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
                         .arrayOfPointers = VK_FALSE,
-                        .data = { .deviceAddress = instance_buffer_address } }
+                        .data = { .deviceAddress = instance_buffer.get_address() } }
                 };
                 const VkAccelerationStructureBuildRangeInfoKHR range = {
                     .primitiveCount = uint32_t(instances.size()),

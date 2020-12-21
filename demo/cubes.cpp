@@ -22,7 +22,7 @@ struct instance_data {
 
 int main(int argc, char* argv[]) {
     frame_config config;
-    config.app = "lava ray tracing cubes";
+    config.app = "lava raytracing cubes";
     config.cmd_line = { argc, argv };
     config.app_info.req_api_version = instance::api_version::v1_1;
 
@@ -277,9 +277,6 @@ int main(int argc, char* argv[]) {
         if (!index_buffer->create(app.device, indices.data(), sizeof(index) * indices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
             return false;
 
-        VkDeviceAddress vertex_buffer_address = get_buffer_address(app.device, vertex_buffer);
-        VkDeviceAddress index_buffer_address = get_buffer_address(app.device, index_buffer);
-
         // create acceleration structures
         // - a BLAS (bottom level) for each mesh
         // - one TLAS (top level) referencing all the BLAS
@@ -291,11 +288,11 @@ int main(int argc, char* argv[]) {
         // buffer data, common to all BLAS
         const VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
                                                                             .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-                                                                            .vertexData = vertex_buffer_address,
+                                                                            .vertexData = vertex_buffer->get_address(),
                                                                             .vertexStride = sizeof(vertex),
                                                                             .maxVertex = uint32_t(vertices.size()),
                                                                             .indexType = VK_INDEX_TYPE_UINT32,
-                                                                            .indexData = index_buffer_address };
+                                                                            .indexData = index_buffer->get_address() };
 
         VkDeviceSize scratch_buffer_size = 0;
 
@@ -326,7 +323,7 @@ int main(int argc, char* argv[]) {
         scratch_buffer = make_buffer();
         if (!scratch_buffer->create(app.device, nullptr, scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR))
             return false;
-        scratch_buffer_address = get_buffer_address(app.device, scratch_buffer);
+        scratch_buffer_address = scratch_buffer->get_address();
 
         // build BLAS
 

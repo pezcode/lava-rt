@@ -213,14 +213,6 @@ std::optional<VkFormat> get_supported_format(device_ptr device, const VkFormats&
     return std::nullopt;
 }
 
-VkDeviceAddress get_buffer_address(device_ptr device, buffer::ptr buffer) {
-    const VkBufferDeviceAddressInfoKHR addr_info = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
-        .buffer = buffer->get()
-    };
-    return device->call().vkGetBufferDeviceAddressKHR(device->get(), &addr_info);
-}
-
 bool one_time_command_buffer(device_ptr device, VkCommandPool pool, device::queue::ref queue, std::function<void(VkCommandBuffer)> callback) {
     VkCommandBuffer cmd_buf = VK_NULL_HANDLE;
     if (!device->vkAllocateCommandBuffers(

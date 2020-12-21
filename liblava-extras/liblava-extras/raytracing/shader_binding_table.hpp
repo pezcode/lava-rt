@@ -111,21 +111,16 @@ namespace lava {
                     buffer = lava::make_buffer();
                     if (!buffer->create_mapped(device, nullptr, table_data.size() + possible_padding, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                         return false;
-
-                    const VkBufferDeviceAddressInfoKHR addr_info = {
-                        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR,
-                        .buffer = buffer->get()
-                    };
-                    VkDeviceAddress address = device->call().vkGetBufferDeviceAddressKHR(device->get(), &addr_info);
+                    VkDeviceAddress buffer_address = buffer->get_address();
 
                     uint8_t* buffer_data = static_cast<uint8_t*>(buffer->get_mapped_data());
-                    size_t buffer_offset = lava::align_up<VkDeviceAddress>(address, rt_properties.shaderGroupBaseAlignment) - address;
+                    size_t buffer_offset = lava::align_up<VkDeviceAddress>(buffer_address, rt_properties.shaderGroupBaseAlignment) - buffer_address;
 
                     memcpy(&buffer_data[buffer_offset], table_data.data(), table_data.size());
 
                     for (size_t i = 0; i < group_type::count; i++) {
                         regions[i] = {
-                            .deviceAddress = address + buffer_offset,
+                            .deviceAddress = buffer_address + buffer_offset,
                             .stride = strides[i],
                             .size = group_counts[i] * strides[i]
                         };
