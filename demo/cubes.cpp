@@ -37,6 +37,8 @@ int main(int argc, char* argv[]) {
     if (!app.setup())
         return error::not_ready;
 
+    const size_t uniform_stride = lava::align_up(sizeof(uniform_data), app.device->get_physical_device()->get_properties().limits.minUniformBufferOffsetAlignment);
+
     mesh::ptr cube = create_mesh(app.device, mesh_type::cube);
     if (!cube)
         return error::create_failed;
@@ -148,7 +150,7 @@ int main(int argc, char* argv[]) {
 
         // uniform buffer for camera parameters and background color
         uniform_buffer = make_buffer();
-        if (!uniform_buffer->create_mapped(app.device, nullptr, sizeof(uniform_data), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
+        if (!uniform_buffer->create_mapped(app.device, nullptr, app.target->get_frame_count() * uniform_stride, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
             return false;
 
         // output image for the raytracing shader
@@ -165,7 +167,7 @@ int main(int argc, char* argv[]) {
 
         // descriptor set used by the raytracing shaders and the blit shader
         shared_descriptor_set_layout = make_descriptor();
-        shared_descriptor_set_layout->add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR);
+        shared_descriptor_set_layout->add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR);
         shared_descriptor_set_layout->add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR);
         if (!shared_descriptor_set_layout->create(app.device))
             return false;
@@ -193,7 +195,8 @@ int main(int argc, char* argv[]) {
             return false;
 
         blit_pipeline->on_process = [&](VkCommandBuffer cmd_buf) {
-            app.device->call().vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_pipeline_layout->get(), 0, 1, &shared_descriptor_set, 0, nullptr);
+            const uint32_t uniform_offset = app.block.get_current_frame() * uniform_stride;
+            app.device->call().vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_pipeline_layout->get(), 0, 1, &shared_descriptor_set, 1, &uniform_offset);
             // fullscreen triangle
             // no vertex buffer, attributes are generated in the vertex shader
             app.device->call().vkCmdDraw(cmd_buf, 3, 1, 0, 0);
@@ -374,12 +377,15 @@ int main(int argc, char* argv[]) {
 
         std::vector<VkWriteDescriptorSet> write_sets;
 
+        VkDescriptorBufferInfo buffer_info = *uniform_buffer->get_info();
+        buffer_info.range = uniform_stride;
+
         write_sets.push_back({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                                .dstSet = shared_descriptor_set,
                                .dstBinding = 0,
                                .descriptorCount = 1,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                               .pBufferInfo = uniform_buffer->get_info() });
+                               .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+                               .pBufferInfo = &buffer_info });
 
         const std::array<VkAccelerationStructureKHR, 1> acceleration_structures = { top_as->get() };
         const VkWriteDescriptorSetAccelerationStructureKHR acceleration_info = {
@@ -424,7 +430,7 @@ int main(int argc, char* argv[]) {
         uniforms.inv_proj = glm::inverse(perspective_matrix(size, 90.0f, 5.0f));
         uniforms.viewport = { 0, 0, size };
         uniforms.background_color = { render_pass->get_clear_color(), 1.0f };
-        uniforms.max_depth = 4;
+        uniforms.max_depth = 5;
 
         swapchain_callback.on_created({}, { { 0, 0 }, size });
 
@@ -476,7 +482,9 @@ int main(int argc, char* argv[]) {
     // this is called before app.forward_shading (blit + gui) is processed
 
     app.on_process = [&](VkCommandBuffer cmd_buf, index frame) {
-        *static_cast<uniform_data*>(uniform_buffer->get_mapped_data()) = uniforms;
+        const uint32_t uniform_offset = frame * uniform_stride;
+        uint8_t* address = static_cast<uint8_t*>(uniform_buffer->get_mapped_data()) + uniform_offset;
+        *reinterpret_cast<uniform_data*>(address) = uniforms;
 
         // rebuild TLAS with new transformation matrices
 
@@ -501,7 +509,7 @@ int main(int argc, char* argv[]) {
 
         raytracing_pipeline->bind(cmd_buf);
 
-        app.device->call().vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, raytracing_pipeline_layout->get(), 0, 1, &shared_descriptor_set, 0, nullptr);
+        app.device->call().vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, raytracing_pipeline_layout->get(), 0, 1, &shared_descriptor_set, 1, &uniform_offset);
         app.device->call().vkCmdBindDescriptorSets(cmd_buf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, raytracing_pipeline_layout->get(), 1, 1, &raytracing_descriptor_set, 0, nullptr);
 
         // trace rays!
@@ -525,11 +533,10 @@ int main(int argc, char* argv[]) {
 
         ImGui::Begin(app.get_name());
 
-        // TODO per-frame uniform data would require a dynamic uniform buffer with correct alignment
-        //ImGui::SetNextItemWidth(ImGui::GetWindowSize().x * 0.5f);
-        //ImGui::SliderInt("Max ray depth", (int*)&uniforms.max_depth, 0, 5);
+        ImGui::SetNextItemWidth(ImGui::GetWindowSize().x * 0.5f);
+        ImGui::SliderInt("Max ray depth", (int*) &uniforms.max_depth, 1, 5);
 
-        app.draw_about(false);
+        app.draw_about(true);
 
         ImGui::End();
     };
