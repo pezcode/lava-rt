@@ -23,7 +23,7 @@ namespace lava {
                     return properties;
                 }
 
-                virtual bool create(lava::device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) = 0;
+                virtual bool create(device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) = 0;
                 virtual void destroy();
 
                 // TODO host command versions of build and compact
@@ -38,6 +38,10 @@ namespace lava {
                     return handle;
                 }
 
+                device_ptr get_device() {
+                    return device;
+                }
+
                 VkDeviceAddress get_address() const {
                     return address;
                 }
@@ -45,7 +49,7 @@ namespace lava {
                 VkDeviceSize scratch_buffer_size() const;
 
             protected:
-                lava::device_ptr device = nullptr;
+                device_ptr device = nullptr;
 
                 VkPhysicalDeviceAccelerationStructurePropertiesKHR properties;
 
@@ -67,17 +71,17 @@ namespace lava {
 
                 bool built = false;
 
-                bool create_internal(lava::device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags);
+                bool create_internal(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags);
                 void add_geometry(const VkAccelerationStructureGeometryDataKHR& geometry_data, VkGeometryTypeKHR type, const VkAccelerationStructureBuildRangeInfoKHR& range, VkGeometryFlagsKHR flags = 0);
                 VkAccelerationStructureBuildSizesInfoKHR get_sizes() const;
             };
 
             struct bottom_level_acceleration_structure : acceleration_structure {
                 using ptr = std::shared_ptr<bottom_level_acceleration_structure>;
-                using map = std::map<lava::id, ptr>;
+                using map = std::map<id, ptr>;
                 using list = std::vector<ptr>;
 
-                virtual bool create(lava::device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
+                virtual bool create(device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
 
                 void add_geometry(const VkAccelerationStructureGeometryTrianglesDataKHR& triangles, const VkAccelerationStructureBuildRangeInfoKHR& range, VkGeometryFlagsKHR flags = 0) {
                     acceleration_structure::add_geometry({ .triangles = triangles }, VK_GEOMETRY_TYPE_TRIANGLES_KHR, range, flags);
@@ -91,25 +95,32 @@ namespace lava {
 
             struct top_level_acceleration_structure : acceleration_structure {
                 using ptr = std::shared_ptr<top_level_acceleration_structure>;
-                using map = std::map<lava::id, ptr>;
+                using map = std::map<id, ptr>;
                 using list = std::vector<ptr>;
 
-                virtual bool create(lava::device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
+                top_level_acceleration_structure();
+
+                virtual bool create(device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
                 virtual void destroy() override;
+
+                const VkWriteDescriptorSetAccelerationStructureKHR* get_descriptor_info() const {
+                    return &descriptor;
+                };
 
                 void add_instance(const VkAccelerationStructureInstanceKHR& instance);
                 void add_instance(bottom_level_acceleration_structure::ptr blas);
 
-                void update_instance(lava::index i, const VkAccelerationStructureInstanceKHR& instance);
-                void update_instance(lava::index i, bottom_level_acceleration_structure::ptr blas);
+                void update_instance(index i, const VkAccelerationStructureInstanceKHR& instance);
+                void update_instance(index i, bottom_level_acceleration_structure::ptr blas);
 
-                void set_instance_transform(lava::index i, const glm::mat4x3& transform);
+                void set_instance_transform(index i, const glm::mat4x3& transform);
 
                 void clear_instances();
 
             private:
                 std::vector<VkAccelerationStructureInstanceKHR> instances;
-                lava::buffer instance_buffer;
+                buffer instance_buffer;
+                VkWriteDescriptorSetAccelerationStructureKHR descriptor;
             };
 
             inline bottom_level_acceleration_structure::ptr make_bottom_level_acceleration_structure() {

@@ -9,14 +9,14 @@ namespace lava {
 
             using VkRayTracingShaderGroupCreateInfosKHR = std::vector<VkRayTracingShaderGroupCreateInfoKHR>;
 
-            struct raytracing_pipeline : lava::pipeline {
+            struct raytracing_pipeline : pipeline {
                 using ptr = std::shared_ptr<raytracing_pipeline>;
-                using map = std::map<lava::id, ptr>;
+                using map = std::map<id, ptr>;
                 using list = std::vector<ptr>;
 
                 using pipeline::pipeline;
 
-                explicit raytracing_pipeline(lava::device_ptr device, VkPipelineCache pipeline_cache = VK_NULL_HANDLE);
+                explicit raytracing_pipeline(device_ptr device, VkPipelineCache pipeline_cache = VK_NULL_HANDLE);
 
                 void bind(VkCommandBuffer cmdBuffer) override;
 
@@ -24,8 +24,8 @@ namespace lava {
                     return properties;
                 }
 
-                bool add_shader_stage(lava::data const& data, VkShaderStageFlagBits stage);
-                bool add_shader(lava::data const& data, VkShaderStageFlagBits stage) {
+                bool add_shader_stage(cdata const& data, VkShaderStageFlagBits stage);
+                bool add_shader(cdata const& data, VkShaderStageFlagBits stage) {
                     return add_shader_stage(data, stage);
                 }
 
@@ -78,7 +78,7 @@ namespace lava {
                 uint32_t max_recursion_depth;
             };
 
-            inline raytracing_pipeline::ptr make_raytracing_pipeline(lava::device_ptr device,
+            inline raytracing_pipeline::ptr make_raytracing_pipeline(device_ptr device,
                                                                      VkPipelineCache pipeline_cache = VK_NULL_HANDLE) {
                 return std::make_shared<raytracing_pipeline>(device, pipeline_cache);
             }

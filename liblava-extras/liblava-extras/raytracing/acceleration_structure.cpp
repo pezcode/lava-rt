@@ -185,6 +185,12 @@ namespace lava {
                 ranges.clear();
             }
 
+            top_level_acceleration_structure::top_level_acceleration_structure()
+            : descriptor({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
+                           .accelerationStructureCount = 1,
+                           .pAccelerationStructures = &handle }) {
+            }
+
             bool top_level_acceleration_structure::create(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 device = dev;
 

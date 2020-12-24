@@ -1,6 +1,9 @@
 #include <imgui.h>
 #include <algorithm>
 #include <demo.hpp>
+#include <glm/gtc/color_space.hpp>
+#include <liblava-extras/raytracing.hpp>
+#include <liblava/lava.hpp>
 
 using namespace lava;
 using namespace lava::extras::raytracing;
@@ -27,8 +30,9 @@ int main(int argc, char* argv[]) {
     config.app_info.req_api_version = instance::api_version::v1_1;
 
     app app(config);
-    if (!app.ready())
-        return error::not_ready;
+
+    app.config.surface.formats = { VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB };
+
     device::ptr device = create_raytracing_device(app.manager);
     if (!device)
         return error::not_ready;
@@ -37,7 +41,12 @@ int main(int argc, char* argv[]) {
     if (!app.setup())
         return error::not_ready;
 
-    const size_t uniform_stride = lava::align_up(sizeof(uniform_data), app.device->get_physical_device()->get_properties().limits.minUniformBufferOffsetAlignment);
+    // the command buffer used for vkCmdBuildAccelerationStructureKHR and vkCmdTraceRaysKHR must support compute
+    // lava's default queue has graphics, compute and transfer support and the Vulkan spec guarantees that
+    // this combination exists as long as the device supports graphics queues
+    queue::ref queue = app.device->graphics_queue();
+
+    const size_t uniform_stride = align_up(sizeof(uniform_data), app.device->get_physical_device()->get_properties().limits.minUniformBufferOffsetAlignment);
 
     mesh::ptr cube = create_mesh(app.device, mesh_type::cube);
     if (!cube)
@@ -65,7 +74,7 @@ int main(int argc, char* argv[]) {
         instances.push_back(instance);
         vertices.insert(vertices.end(), mesh.vertices.begin(), mesh.vertices.end());
         std::for_each(vertices.begin() + instance.vertex_base, vertices.end(), [&](vertex& v) {
-            v.color = { instance_colors[i], 1.0f };
+            v.color = { glm::convertSRGBToLinear(instance_colors[i]), 1.0f };
         });
         indices.insert(indices.end(), mesh.indices.begin(), mesh.indices.end());
     }
@@ -73,22 +82,26 @@ int main(int argc, char* argv[]) {
     cube->destroy();
     cube = nullptr;
 
-    graphics_pipeline::ptr blit_pipeline;
-    pipeline_layout::ptr blit_pipeline_layout;
-
-    VkDescriptorSet shared_descriptor_set;
-    descriptor::ptr shared_descriptor_set_layout;
-
     VkCommandPool pool = VK_NULL_HANDLE;
+    descriptor::pool::ptr descriptor_pool;
+
+    pipeline_layout::ptr blit_pipeline_layout;
+    graphics_pipeline::ptr blit_pipeline;
+
+    descriptor::ptr shared_descriptor_set_layout;
+    VkDescriptorSet shared_descriptor_set;
+
     pipeline_layout::ptr raytracing_pipeline_layout;
     raytracing_pipeline::ptr raytracing_pipeline;
+
     shader_binding_table::ptr shader_binding;
 
-    VkDescriptorSet raytracing_descriptor_set;
     descriptor::ptr raytracing_descriptor_set_layout;
+    VkDescriptorSet raytracing_descriptor_set;
 
-    bottom_level_acceleration_structure::list bottom_as_list;
     top_level_acceleration_structure::ptr top_as;
+    bottom_level_acceleration_structure::list bottom_as_list;
+
     buffer::ptr scratch_buffer;
     VkDeviceAddress scratch_buffer_address = 0;
 
@@ -127,7 +140,7 @@ int main(int argc, char* argv[]) {
 
             // transition image to general layout
             return one_time_command_buffer(
-                app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
+                app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
                     insert_image_memory_barrier(app.device, cmd_buf, output_image->get(), 0, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                                                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, output_image->get_subresource_range());
                 });
@@ -144,8 +157,19 @@ int main(int argc, char* argv[]) {
         // command pool for one-time command buffers
         const VkCommandPoolCreateInfo create_info = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                                       .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                                                      .queueFamilyIndex = uint32_t(app.device->graphics_queue().family) };
+                                                      .queueFamilyIndex = uint32_t(queue.family) };
         if (!app.device->vkCreateCommandPool(&create_info, &pool))
+            return false;
+
+        descriptor_pool = make_descriptor_pool();
+        constexpr uint32_t set_count = 2;
+        const VkDescriptorPoolSizes sizes = {
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1 },
+            { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV, 1 }
+        };
+        if (!descriptor_pool->create(app.device, sizes, set_count, 0))
             return false;
 
         // uniform buffer for camera parameters and background color
@@ -154,16 +178,12 @@ int main(int argc, char* argv[]) {
             return false;
 
         // output image for the raytracing shader
-        const VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        // TODO how does image2D layout format tie into this? GLSL buffer format seem to convert between formats of different sizes
-        std::optional<VkFormat> format = get_supported_format(app.device, { VK_FORMAT_R16G16B16A16_SFLOAT /*, VK_FORMAT_R32G32B32A32_SFLOAT*/ }, usage);
-        if (!format.has_value())
-            return false;
-
-        output_image = make_image(*format);
-        output_image->set_usage(usage);
+        // RGBA16F is guaranteed to support these usage flags
+        VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        output_image = make_image(format);
+        output_image->set_usage(VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         output_image->set_layout(VK_IMAGE_LAYOUT_UNDEFINED);
-        output_image->set_aspect_mask(format_aspect_mask(*format));
+        output_image->set_aspect_mask(format_aspect_mask(format));
 
         // descriptor set used by the raytracing shaders and the blit shader
         shared_descriptor_set_layout = make_descriptor();
@@ -172,7 +192,7 @@ int main(int argc, char* argv[]) {
         if (!shared_descriptor_set_layout->create(app.device))
             return false;
 
-        shared_descriptor_set = shared_descriptor_set_layout->allocate();
+        shared_descriptor_set = shared_descriptor_set_layout->allocate(descriptor_pool->get());
 
         // blit pipeline that draws the raytraced output image to the swapchain
         blit_pipeline_layout = make_pipeline_layout();
@@ -220,7 +240,7 @@ int main(int argc, char* argv[]) {
         if (!raytracing_pipeline_layout->create(app.device))
             return false;
 
-        raytracing_descriptor_set = raytracing_descriptor_set_layout->allocate();
+        raytracing_descriptor_set = raytracing_descriptor_set_layout->allocate(descriptor_pool->get());
 
         // raytracing pipeline with raygen, miss and closest-hit shader
         raytracing_pipeline = make_raytracing_pipeline(app.device);
@@ -262,8 +282,8 @@ int main(int argc, char* argv[]) {
             glm::vec3 direction = { 0.0f, 0.0f, 1.0f };
         } callable_record;
 
-        std::vector records(raytracing_pipeline->get_shader_groups().size(), data(nullptr, 0));
-        records[callable] = data(&callable_record, sizeof(callable_record));
+        std::vector records(raytracing_pipeline->get_shader_groups().size(), cdata(nullptr, 0));
+        records[callable] = cdata(&callable_record, sizeof(callable_record));
 
         shader_binding = make_shader_binding_table();
         if (!shader_binding->create(raytracing_pipeline, records))
@@ -328,9 +348,9 @@ int main(int argc, char* argv[]) {
             return false;
         scratch_buffer_address = scratch_buffer->get_address();
 
-        // build BLAS
+        // build BLAS and TLAS
 
-        one_time_command_buffer(app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
+        one_time_command_buffer(app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
             // barrier to wait for build to finish
             const VkMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                                               .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR,
@@ -352,7 +372,7 @@ int main(int argc, char* argv[]) {
         if (COMPACT_BLAS) {
             std::vector<bottom_level_acceleration_structure::ptr> compacted_bottom_as_list;
 
-            one_time_command_buffer(app.device, pool, app.device->graphics_queue(), [&](VkCommandBuffer cmd_buf) {
+            one_time_command_buffer(app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
                 const VkMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                                                   .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR,
                                                   .dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
@@ -375,52 +395,46 @@ int main(int argc, char* argv[]) {
 
         // write descriptors
 
-        std::vector<VkWriteDescriptorSet> write_sets;
-
-        VkDescriptorBufferInfo buffer_info = *uniform_buffer->get_info();
+        VkDescriptorBufferInfo buffer_info = *uniform_buffer->get_descriptor_info();
+        // for dynamic uniform buffers, range must be the bound size, not the total buffer size
         buffer_info.range = uniform_stride;
 
-        write_sets.push_back({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                               .dstSet = shared_descriptor_set,
-                               .dstBinding = 0,
-                               .descriptorCount = 1,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-                               .pBufferInfo = &buffer_info });
+        const std::array<const VkWriteDescriptorSet, 5> write_sets = {
+            VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                  .dstSet = shared_descriptor_set,
+                                  .dstBinding = 0,
+                                  .descriptorCount = 1,
+                                  .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+                                  .pBufferInfo = &buffer_info },
 
-        const std::array<VkAccelerationStructureKHR, 1> acceleration_structures = { top_as->get() };
-        const VkWriteDescriptorSetAccelerationStructureKHR acceleration_info = {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
-            .accelerationStructureCount = uint32_t(acceleration_structures.size()),
-            .pAccelerationStructures = acceleration_structures.data()
+            VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                  .pNext = top_as->get_descriptor_info(),
+                                  .dstSet = raytracing_descriptor_set,
+                                  .dstBinding = 0,
+                                  .descriptorCount = 1,
+                                  .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR },
+
+            VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                  .dstSet = raytracing_descriptor_set,
+                                  .dstBinding = 1,
+                                  .descriptorCount = 1,
+                                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                  .pBufferInfo = instance_buffer->get_descriptor_info() },
+
+            VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                  .dstSet = raytracing_descriptor_set,
+                                  .dstBinding = 2,
+                                  .descriptorCount = 1,
+                                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                  .pBufferInfo = vertex_buffer->get_descriptor_info() },
+
+            VkWriteDescriptorSet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                  .dstSet = raytracing_descriptor_set,
+                                  .dstBinding = 3,
+                                  .descriptorCount = 1,
+                                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                  .pBufferInfo = index_buffer->get_descriptor_info() }
         };
-
-        write_sets.push_back({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                               .pNext = &acceleration_info,
-                               .dstSet = raytracing_descriptor_set,
-                               .dstBinding = 0,
-                               .descriptorCount = 1,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR });
-
-        write_sets.push_back({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                               .dstSet = raytracing_descriptor_set,
-                               .dstBinding = 1,
-                               .descriptorCount = 1,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                               .pBufferInfo = instance_buffer->get_info() });
-
-        write_sets.push_back({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                               .dstSet = raytracing_descriptor_set,
-                               .dstBinding = 2,
-                               .descriptorCount = 1,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                               .pBufferInfo = vertex_buffer->get_info() });
-
-        write_sets.push_back({ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                               .dstSet = raytracing_descriptor_set,
-                               .dstBinding = 3,
-                               .descriptorCount = 1,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                               .pBufferInfo = index_buffer->get_info() });
 
         app.device->vkUpdateDescriptorSets(write_sets.size(), write_sets.data());
 
@@ -429,7 +443,7 @@ int main(int argc, char* argv[]) {
         uniforms.inv_view = glm::inverse(glm::lookAtLH(glm::vec3(0.75f, 0.25f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)));
         uniforms.inv_proj = glm::inverse(perspective_matrix(size, 90.0f, 5.0f));
         uniforms.viewport = { 0, 0, size };
-        uniforms.background_color = { render_pass->get_clear_color(), 1.0f };
+        uniforms.background_color = { glm::convertSRGBToLinear(render_pass->get_clear_color()), 1.0f };
         uniforms.max_depth = 5;
 
         swapchain_callback.on_created({}, { { 0, 0 }, size });
@@ -447,10 +461,9 @@ int main(int argc, char* argv[]) {
         raytracing_pipeline->destroy();
         raytracing_pipeline_layout->destroy();
 
-        shared_descriptor_set_layout->free(shared_descriptor_set);
-        shared_descriptor_set_layout->destroy();
+        descriptor_pool->destroy();
 
-        raytracing_descriptor_set_layout->free(raytracing_descriptor_set);
+        shared_descriptor_set_layout->destroy();
         raytracing_descriptor_set_layout->destroy();
 
         instance_buffer->destroy();
@@ -483,7 +496,7 @@ int main(int argc, char* argv[]) {
 
     app.on_process = [&](VkCommandBuffer cmd_buf, index frame) {
         const uint32_t uniform_offset = frame * uniform_stride;
-        uint8_t* address = static_cast<uint8_t*>(uniform_buffer->get_mapped_data()) + uniform_offset;
+        char* address = static_cast<char*>(uniform_buffer->get_mapped_data()) + uniform_offset;
         *reinterpret_cast<uniform_data*>(address) = uniforms;
 
         // rebuild TLAS with new transformation matrices
@@ -503,9 +516,7 @@ int main(int argc, char* argv[]) {
         app.device->call().vkCmdPipelineBarrier(cmd_buf, build, use, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 
         // wait for previous image reads
-        insert_image_memory_barrier(app.device, cmd_buf, output_image->get(), VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-                                    VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                                    output_image->get_subresource_range());
+        app.device->call().vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, nullptr, 0, nullptr, 0, nullptr);
 
         raytracing_pipeline->bind(cmd_buf);
 
@@ -516,7 +527,7 @@ int main(int argc, char* argv[]) {
 
         const glm::uvec3 size = { uniforms.viewport.z, uniforms.viewport.w, 1 };
 
-        const VkStridedDeviceAddressRegionKHR raygen = shader_binding->get_raygen_region(0);
+        const VkStridedDeviceAddressRegionKHR raygen = shader_binding->get_raygen_region();
         app.device->call().vkCmdTraceRaysKHR(
             cmd_buf,
             &raygen, &shader_binding->get_miss_region(), &shader_binding->get_hit_region(), &shader_binding->get_callable_region(),
@@ -528,7 +539,7 @@ int main(int argc, char* argv[]) {
                                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, output_image->get_subresource_range());
     };
 
-    app.gui.on_draw = [&]() {
+    app.imgui.on_draw = [&]() {
         ImGui::SetNextWindowPos(ImVec2(30, 30), ImGuiCond_FirstUseEver);
 
         ImGui::Begin(app.get_name());

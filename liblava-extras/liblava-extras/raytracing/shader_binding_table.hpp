@@ -23,18 +23,18 @@ namespace lava {
                     destroy();
                 };
 
-                bool create(raytracing_pipeline::ptr pipeline, std::vector<lava::data> records = std::vector<lava::data>()) {
-                    lava::device_ptr device = pipeline->get_device();
+                bool create(raytracing_pipeline::ptr pipeline, std::vector<cdata> records = std::vector<cdata>()) {
+                    device = pipeline->get_device();
 
                     size_t group_counts[group_type::count] = {}; // number of shader groups of each type
                     size_t record_sizes[group_type::count] = {}; // largest record size per type, to calculate stride
 
                     // extract shader count and record size from group info and shader stages
 
-                    const VkRayTracingShaderGroupCreateInfosKHR groups = pipeline->get_shader_groups();
+                    const VkRayTracingShaderGroupCreateInfosKHR& groups = pipeline->get_shader_groups();
                     records.resize(groups.size()); // fill with empty ptr/size if necessary
 
-                    const lava::pipeline::shader_stage::list stages = pipeline->get_shader_stages();
+                    const pipeline::shader_stage::list stages = pipeline->get_shader_stages();
                     for (size_t i = 0; i < groups.size(); i++) {
                         const VkRayTracingShaderGroupCreateInfoKHR& group = groups[i];
                         switch (group.type) {
@@ -80,7 +80,7 @@ namespace lava {
                     const size_t handle_size = rt_properties.shaderGroupHandleSize;
 
                     std::vector<uint8_t> handles(handle_size * groups.size());
-                    if (!lava::check(device->call().vkGetRayTracingShaderGroupHandlesKHR(
+                    if (!check(device->call().vkGetRayTracingShaderGroupHandlesKHR(
                             device->get(), pipeline->get(), 0, groups.size(), handles.size(), handles.data())))
                         return false;
 
@@ -93,8 +93,8 @@ namespace lava {
                     size_t cur_group = 0;
                     std::vector<uint8_t> table_data;
                     for (size_t i = 0; i < group_type::count; i++) {
-                        strides[i] = lava::align_up<VkDeviceSize>(handle_size + record_sizes[i], rt_properties.shaderGroupHandleAlignment);
-                        sbt_sizes[i] = lava::align_up<VkDeviceSize>(group_counts[i] * strides[i], rt_properties.shaderGroupBaseAlignment);
+                        strides[i] = align_up<VkDeviceSize>(handle_size + record_sizes[i], rt_properties.shaderGroupHandleAlignment);
+                        sbt_sizes[i] = align_up<VkDeviceSize>(group_counts[i] * strides[i], rt_properties.shaderGroupBaseAlignment);
                         size_t offset = table_data.size();
                         table_data.insert(table_data.end(), sbt_sizes[i], 0);
                         for (size_t c = 0; c < group_counts[i]; c++) {
@@ -107,14 +107,14 @@ namespace lava {
                         }
                     }
 
-                    size_t possible_padding = rt_properties.shaderGroupBaseAlignment - 1;
-                    buffer = lava::make_buffer();
+                    const size_t possible_padding = rt_properties.shaderGroupBaseAlignment - 1;
+                    buffer = make_buffer();
                     if (!buffer->create_mapped(device, nullptr, table_data.size() + possible_padding, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                         return false;
-                    VkDeviceAddress buffer_address = buffer->get_address();
+                    const VkDeviceAddress buffer_address = buffer->get_address();
 
                     uint8_t* buffer_data = static_cast<uint8_t*>(buffer->get_mapped_data());
-                    size_t buffer_offset = lava::align_up<VkDeviceAddress>(buffer_address, rt_properties.shaderGroupBaseAlignment) - buffer_address;
+                    size_t buffer_offset = align_up<VkDeviceAddress>(buffer_address, rt_properties.shaderGroupBaseAlignment) - buffer_address;
 
                     memcpy(&buffer_data[buffer_offset], table_data.data(), table_data.size());
 
@@ -138,6 +138,10 @@ namespace lava {
                     device = nullptr;
                 }
 
+                device_ptr get_device() {
+                    return device;
+                }
+
                 bool valid() const {
                     return buffer && buffer->valid();
                 }
@@ -145,7 +149,7 @@ namespace lava {
                 // miss/hit/callable shader can be chosen in traceRayEXT calls inside shaders with a parameter
                 // vkCmdTraceRaysKHR has no parameter to choose a raygen shader other than the one
                 // at the address provided, so adjust that address
-                VkStridedDeviceAddressRegionKHR get_raygen_region(lava::index index = 0) const {
+                VkStridedDeviceAddressRegionKHR get_raygen_region(index index = 0) const {
                     VkStridedDeviceAddressRegionKHR region = regions[raygen];
                     region.deviceAddress += index * region.stride;
                     region.size = region.stride;
@@ -165,8 +169,8 @@ namespace lava {
                 }
 
             private:
-                lava::device_ptr device = nullptr;
-                lava::buffer::ptr buffer;
+                device_ptr device = nullptr;
+                buffer::ptr buffer;
 
                 enum group_type : size_t {
                     raygen = 0,
