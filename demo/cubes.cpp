@@ -25,9 +25,9 @@ struct instance_data {
 
 int main(int argc, char* argv[]) {
     frame_config config;
-    config.app = "lava raytracing cubes";
+    config.info.app_name = "lava raytracing cubes";
     config.cmd_line = { argc, argv };
-    config.app_info.req_api_version = instance::api_version::v1_1;
+    config.info.req_api_version = api_version::v1_1;
 
     app app(config);
 
