@@ -106,6 +106,7 @@ namespace lava {
                     };
                     device->call().vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
                                                         1, &barrier, 0, nullptr, 0, nullptr);
+                    device->call().vkCmdResetQueryPool(cmd_buf, query_pool, 0, 1);
                     device->call().vkCmdWriteAccelerationStructuresPropertiesKHR(
                         cmd_buf, 1, &handle, VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, query_pool, 0);
                 }

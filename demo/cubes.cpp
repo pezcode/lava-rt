@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
             { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
             { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
             { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1 },
-            { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV, 1 }
+            { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }
         };
         if (!descriptor_pool->create(app.device, sizes, set_count, 0))
             return false;
