@@ -98,12 +98,12 @@ device::ptr create_raytracing_device(device_manager& manager) {
     //features_ray_query.pNext = &features_scalar_block_layout;
     features_ray_tracing_pipeline.pNext = &features_scalar_block_layout;
 
-    for (physical_device::ref physical_device : instance::singleton().get_physical_devices()) {
-        const VkPhysicalDeviceProperties& properties = physical_device.get_properties();
+    for (physical_device::ptr physical_device : instance::singleton().get_physical_devices()) {
+        const VkPhysicalDeviceProperties& properties = physical_device->get_properties();
         if (properties.apiVersion < VK_API_VERSION_1_1)
             continue;
 
-        device::create_param device_params = physical_device.create_default_device_param();
+        device::create_param device_params = physical_device->create_default_device_param();
         device_params.extensions.insert(device_params.extensions.end(), extensions.begin(), extensions.end());
         device_params.features = features;
         device_params.next = &features_acceleration_structure;
@@ -114,8 +114,8 @@ device::ptr create_raytracing_device(device_manager& manager) {
 
         device->set_allocator(lava::create_allocator(device.get(), VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT));
 
-        log()->info("using device: {} ({})", physical_device.get_properties().deviceName,
-                    physical_device.get_device_type_string());
+        log()->info("using device: {} ({})", physical_device->get_properties().deviceName,
+                    physical_device->get_device_type_string());
 
         return device;
     }
