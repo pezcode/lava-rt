@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<instance_data> instances;
     std::vector<vertex> vertices;
-    std::vector<index> indices;
+    std::vector<lava::index> indices;
 
     // combined vertex and index buffers for all meshes
 
@@ -297,7 +297,7 @@ int main(int argc, char* argv[]) {
         if (!vertex_buffer->create(app.device, vertices.data(), sizeof(vertex) * vertices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
             return false;
         index_buffer = make_buffer();
-        if (!index_buffer->create(app.device, indices.data(), sizeof(index) * indices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
+        if (!index_buffer->create(app.device, indices.data(), sizeof(lava::index) * indices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
             return false;
 
         // create acceleration structures
@@ -309,13 +309,13 @@ int main(int argc, char* argv[]) {
         top_as = make_top_level_acceleration_structure();
 
         // buffer data, common to all BLAS
-        const VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
-                                                                            .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-                                                                            .vertexData = vertex_buffer->get_address(),
-                                                                            .vertexStride = sizeof(vertex),
-                                                                            .maxVertex = uint32_t(vertices.size()),
-                                                                            .indexType = VK_INDEX_TYPE_UINT32,
-                                                                            .indexData = index_buffer->get_address() };
+        VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+                                                                        .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
+                                                                        .vertexStride = sizeof(vertex),
+                                                                        .maxVertex = uint32_t(vertices.size()),
+                                                                        .indexType = VK_INDEX_TYPE_UINT32 };
+        triangles.vertexData.deviceAddress = vertex_buffer->get_address();
+        triangles.indexData.deviceAddress = index_buffer->get_address();
 
         VkDeviceSize scratch_buffer_size = 0;
 
@@ -324,7 +324,7 @@ int main(int argc, char* argv[]) {
             // per-mesh sub-buffer region
             const VkAccelerationStructureBuildRangeInfoKHR range = {
                 .primitiveCount = instance.index_count / 3,
-                .primitiveOffset = instance.index_base * sizeof(index), // this is in bytes
+                .primitiveOffset = static_cast<uint32_t>(instance.index_base * sizeof(lava::index)), // this is in bytes
                 .firstVertex = instance.vertex_base // but this is an index...
             };
 
@@ -494,7 +494,7 @@ int main(int argc, char* argv[]) {
 
     // this is called before app.forward_shading (blit + gui) is processed
 
-    app.on_process = [&](VkCommandBuffer cmd_buf, index frame) {
+    app.on_process = [&](VkCommandBuffer cmd_buf, lava::index frame) {
         const uint32_t uniform_offset = frame * uniform_stride;
         char* address = static_cast<char*>(uniform_buffer->get_mapped_data()) + uniform_offset;
         *reinterpret_cast<uniform_data*>(address) = uniforms;
