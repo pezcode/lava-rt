@@ -108,12 +108,12 @@ namespace lava {
                     }
 
                     const size_t possible_padding = rt_properties.shaderGroupBaseAlignment - 1;
-                    buffer = make_buffer();
-                    if (!buffer->create_mapped(device, nullptr, table_data.size() + possible_padding, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
+                    sbt_buffer = make_buffer();
+                    if (!sbt_buffer->create_mapped(device, nullptr, table_data.size() + possible_padding, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                         return false;
-                    const VkDeviceAddress buffer_address = buffer->get_address();
+                    const VkDeviceAddress buffer_address = sbt_buffer->get_address();
 
-                    uint8_t* buffer_data = static_cast<uint8_t*>(buffer->get_mapped_data());
+                    uint8_t* buffer_data = static_cast<uint8_t*>(sbt_buffer->get_mapped_data());
                     size_t buffer_offset = align_up<VkDeviceAddress>(buffer_address, rt_properties.shaderGroupBaseAlignment) - buffer_address;
 
                     memcpy(&buffer_data[buffer_offset], table_data.data(), table_data.size());
@@ -133,8 +133,8 @@ namespace lava {
                 }
 
                 void destroy() {
-                    if (buffer)
-                        buffer->destroy();
+                    if (sbt_buffer)
+                        sbt_buffer->destroy();
                     device = nullptr;
                 }
 
@@ -143,7 +143,7 @@ namespace lava {
                 }
 
                 bool valid() const {
-                    return buffer && buffer->valid();
+                    return sbt_buffer && sbt_buffer->valid();
                 }
 
                 // miss/hit/callable shader can be chosen in traceRayEXT calls inside shaders with a parameter
@@ -170,7 +170,7 @@ namespace lava {
 
             private:
                 device_ptr device = nullptr;
-                buffer::ptr buffer;
+                buffer::ptr sbt_buffer;
 
                 enum group_type : size_t {
                     raygen = 0,

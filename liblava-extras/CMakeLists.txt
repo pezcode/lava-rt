@@ -37,9 +37,5 @@ target_link_libraries(lava-extras.raytracing PUBLIC
         lava-extras::core
         )
 
-if (CMAKE_COMPILER_IS_GNUCXX)
-        target_compile_options(lava-extras.raytracing PUBLIC -fpermissive)
-endif()
-
 set_property(TARGET lava-extras.raytracing PROPERTY EXPORT_NAME raytracing)
 add_library(lava-extras::raytracing ALIAS lava-extras.raytracing)

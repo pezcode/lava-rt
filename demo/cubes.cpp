@@ -310,12 +310,12 @@ int main(int argc, char* argv[]) {
 
         // buffer data, common to all BLAS
         VkAccelerationStructureGeometryTrianglesDataKHR triangles = { .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
-                                                                        .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-                                                                        .vertexStride = sizeof(vertex),
-                                                                        .maxVertex = uint32_t(vertices.size()),
-                                                                        .indexType = VK_INDEX_TYPE_UINT32 };
-        triangles.vertexData.deviceAddress = vertex_buffer->get_address();
-        triangles.indexData.deviceAddress = index_buffer->get_address();
+                                                                      .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
+                                                                      .vertexData = { vertex_buffer->get_address() },
+                                                                      .vertexStride = sizeof(vertex),
+                                                                      .maxVertex = uint32_t(vertices.size()),
+                                                                      .indexType = VK_INDEX_TYPE_UINT32,
+                                                                      .indexData = { index_buffer->get_address() } };
 
         VkDeviceSize scratch_buffer_size = 0;
 
