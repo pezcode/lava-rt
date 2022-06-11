@@ -23,7 +23,7 @@ namespace lava {
                     return properties;
                 }
 
-                virtual bool create(device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) = 0;
+                virtual bool create(device_p device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) = 0;
                 virtual void destroy();
 
                 // TODO host command versions of build and compact
@@ -38,7 +38,7 @@ namespace lava {
                     return handle;
                 }
 
-                device_ptr get_device() {
+                device_p get_device() {
                     return device;
                 }
 
@@ -49,7 +49,7 @@ namespace lava {
                 VkDeviceSize scratch_buffer_size() const;
 
             protected:
-                device_ptr device = nullptr;
+                device_p device = nullptr;
 
                 VkPhysicalDeviceAccelerationStructurePropertiesKHR properties;
 
@@ -71,7 +71,7 @@ namespace lava {
 
                 bool built = false;
 
-                bool create_internal(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags);
+                bool create_internal(device_p dev, VkBuildAccelerationStructureFlagsKHR flags);
                 void add_geometry(const VkAccelerationStructureGeometryDataKHR& geometry_data, VkGeometryTypeKHR type, const VkAccelerationStructureBuildRangeInfoKHR& range, VkGeometryFlagsKHR flags = 0);
                 VkAccelerationStructureBuildSizesInfoKHR get_sizes() const;
             };
@@ -81,7 +81,7 @@ namespace lava {
                 using map = std::map<id, ptr>;
                 using list = std::vector<ptr>;
 
-                virtual bool create(device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
+                virtual bool create(device_p device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
 
                 void add_geometry(const VkAccelerationStructureGeometryTrianglesDataKHR& triangles, const VkAccelerationStructureBuildRangeInfoKHR& range, VkGeometryFlagsKHR flags = 0) {
                     acceleration_structure::add_geometry({ .triangles = triangles }, VK_GEOMETRY_TYPE_TRIANGLES_KHR, range, flags);
@@ -100,7 +100,7 @@ namespace lava {
 
                 top_level_acceleration_structure();
 
-                virtual bool create(device_ptr device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
+                virtual bool create(device_p device, VkBuildAccelerationStructureFlagsKHR flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR) override;
                 virtual void destroy() override;
 
                 const VkWriteDescriptorSetAccelerationStructureKHR* get_descriptor_info() const {

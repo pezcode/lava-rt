@@ -2,7 +2,7 @@
 
 using namespace lava;
 
-device::ptr create_raytracing_device(device_manager& manager) {
+device::ptr create_raytracing_device(platform& platform) {
     // https://www.khronos.org/blog/vulkan-ray-tracing-final-specification-release
 
     const std::array<const char*, 9> extensions = {
@@ -16,7 +16,7 @@ device::ptr create_raytracing_device(device_manager& manager) {
         // required by VK_KHR_ray_tracing_pipeline
         VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
         // can't test this, needs an RTX GPU :<
-        //VK_KHR_RAY_QUERY_EXTENSION_NAME,
+        // VK_KHR_RAY_QUERY_EXTENSION_NAME,
         // required by VK_KHR_ray_tracing_pipeline and VK_KHR_ray_query
         VK_KHR_SPIRV_1_4_EXTENSION_NAME,
         // required by VK_KHR_spirv_1_4
@@ -81,10 +81,10 @@ device::ptr create_raytracing_device(device_manager& manager) {
         .rayTracingPipelineTraceRaysIndirect = VK_TRUE
     };
 
-    //VkPhysicalDeviceRayQueryFeaturesKHR features_ray_query = {
-    //    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
-    //    .rayQuery = VK_TRUE
-    //};
+    // VkPhysicalDeviceRayQueryFeaturesKHR features_ray_query = {
+    //     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
+    //     .rayQuery = VK_TRUE
+    // };
 
     VkPhysicalDeviceScalarBlockLayoutFeaturesEXT features_scalar_block_layout = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES,
@@ -94,8 +94,8 @@ device::ptr create_raytracing_device(device_manager& manager) {
     features_acceleration_structure.pNext = &features_buffer_device_address;
     features_buffer_device_address.pNext = &features_descriptor_indexing;
     features_descriptor_indexing.pNext = &features_ray_tracing_pipeline;
-    //features_ray_tracing_pipeline.pNext = &features_ray_query;
-    //features_ray_query.pNext = &features_scalar_block_layout;
+    // features_ray_tracing_pipeline.pNext = &features_ray_query;
+    // features_ray_query.pNext = &features_scalar_block_layout;
     features_ray_tracing_pipeline.pNext = &features_scalar_block_layout;
 
     for (physical_device::ptr physical_device : instance::singleton().get_physical_devices()) {
@@ -108,7 +108,7 @@ device::ptr create_raytracing_device(device_manager& manager) {
         device_params.features = features;
         device_params.next = &features_acceleration_structure;
 
-        device::ptr device = manager.create(device_params);
+        device::ptr device = platform.create(device_params);
         if (!device)
             continue;
 

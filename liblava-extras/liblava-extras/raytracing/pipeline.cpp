@@ -4,7 +4,7 @@ namespace lava {
     namespace extras {
         namespace raytracing {
 
-            raytracing_pipeline::raytracing_pipeline(device_ptr device_, VkPipelineCache pipeline_cache)
+            raytracing_pipeline::raytracing_pipeline(device_p device_, VkPipelineCache pipeline_cache)
             : pipeline(device_, pipeline_cache),
               properties({ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR }),
               max_recursion_depth(1) {
@@ -59,7 +59,7 @@ namespace lava {
                 target->max_recursion_depth = max_recursion_depth;
             }
 
-            bool raytracing_pipeline::create_internal() {
+            bool raytracing_pipeline::setup() {
                 VkPipelineShaderStageCreateInfos stages;
 
                 for (const auto& shader_stage : shader_stages)
@@ -80,7 +80,7 @@ namespace lava {
                                                                   &create_info, memory::alloc(), &vk_pipeline));
             }
 
-            void raytracing_pipeline::destroy_internal() {
+            void raytracing_pipeline::teardown() {
                 shader_groups.clear();
                 shader_stages.clear();
             }

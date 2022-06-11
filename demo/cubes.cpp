@@ -24,16 +24,16 @@ struct instance_data {
 };
 
 int main(int argc, char* argv[]) {
-    frame_config config;
-    config.info.app_name = "lava raytracing cubes";
-    config.cmd_line = { argc, argv };
-    config.info.req_api_version = api_version::v1_1;
+    frame_env env;
+    env.info.app_name = "lava raytracing cubes";
+    env.cmd_line = { argc, argv };
+    env.info.req_api_version = api_version::v1_1;
 
-    app app(config);
+    app app(env);
 
     app.config.surface.formats = { VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB };
 
-    device::ptr device = create_raytracing_device(app.manager);
+    device::ptr device = create_raytracing_device(app.platform);
     if (!device)
         return error::not_ready;
     app.device = device.get();
@@ -139,7 +139,7 @@ int main(int argc, char* argv[]) {
             app.device->vkUpdateDescriptorSets({ write_info });
 
             // transition image to general layout
-            return one_time_command_buffer(
+            return one_time_submit_pool(
                 app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
                     insert_image_memory_barrier(app.device, cmd_buf, output_image->get(), 0, VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                                                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, output_image->get_subresource_range());
@@ -350,7 +350,7 @@ int main(int argc, char* argv[]) {
 
         // build BLAS and TLAS
 
-        one_time_command_buffer(app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
+        one_time_submit_pool(app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
             // barrier to wait for build to finish
             const VkMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                                               .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR,
@@ -372,7 +372,7 @@ int main(int argc, char* argv[]) {
         if (COMPACT_BLAS) {
             std::vector<bottom_level_acceleration_structure::ptr> compacted_bottom_as_list;
 
-            one_time_command_buffer(app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
+            one_time_submit_pool(app.device, pool, queue, [&](VkCommandBuffer cmd_buf) {
                 const VkMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                                                   .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR,
                                                   .dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
