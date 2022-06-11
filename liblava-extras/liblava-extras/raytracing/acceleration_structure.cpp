@@ -11,7 +11,7 @@ namespace lava {
               build_info({ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR }) {
             }
 
-            bool acceleration_structure::create_internal(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
+            bool acceleration_structure::create_internal(device_p dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 device = dev;
 
                 VkPhysicalDeviceProperties2 properties2 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
@@ -176,7 +176,7 @@ namespace lava {
                 return info;
             }
 
-            bool bottom_level_acceleration_structure::create(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
+            bool bottom_level_acceleration_structure::create(device_p dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
                 return create_internal(dev, flags);
             }
@@ -192,7 +192,7 @@ namespace lava {
                            .pAccelerationStructures = &handle }) {
             }
 
-            bool top_level_acceleration_structure::create(device_ptr dev, VkBuildAccelerationStructureFlagsKHR flags) {
+            bool top_level_acceleration_structure::create(device_p dev, VkBuildAccelerationStructureFlagsKHR flags) {
                 device = dev;
 
                 if (!instance_buffer.create_mapped(device, instances.data(), sizeof(decltype(instances)::value_type) * instances.size(),

@@ -138,7 +138,7 @@ namespace lava {
                     device = nullptr;
                 }
 
-                device_ptr get_device() {
+                device_p get_device() {
                     return device;
                 }
 
@@ -169,7 +169,7 @@ namespace lava {
                 }
 
             private:
-                device_ptr device = nullptr;
+                device_p device = nullptr;
                 buffer::ptr sbt_buffer;
 
                 enum group_type : size_t {

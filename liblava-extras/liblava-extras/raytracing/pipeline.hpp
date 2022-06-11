@@ -16,7 +16,7 @@ namespace lava {
 
                 using pipeline::pipeline;
 
-                explicit raytracing_pipeline(device_ptr device, VkPipelineCache pipeline_cache = VK_NULL_HANDLE);
+                explicit raytracing_pipeline(device_p device, VkPipelineCache pipeline_cache = VK_NULL_HANDLE);
 
                 void bind(VkCommandBuffer cmdBuffer) override;
 
@@ -68,8 +68,8 @@ namespace lava {
                 }
 
             private:
-                bool create_internal() override;
-                void destroy_internal() override;
+                bool setup() override;
+                void teardown() override;
 
                 VkPhysicalDeviceRayTracingPipelinePropertiesKHR properties;
 
@@ -78,7 +78,7 @@ namespace lava {
                 uint32_t max_recursion_depth;
             };
 
-            inline raytracing_pipeline::ptr make_raytracing_pipeline(device_ptr device,
+            inline raytracing_pipeline::ptr make_raytracing_pipeline(device_p device,
                                                                      VkPipelineCache pipeline_cache = VK_NULL_HANDLE) {
                 return std::make_shared<raytracing_pipeline>(device, pipeline_cache);
             }
