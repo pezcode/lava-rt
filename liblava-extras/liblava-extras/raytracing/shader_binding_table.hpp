@@ -1,10 +1,7 @@
 #pragma once
 
-#include <liblava-extras/raytracing/pipeline.hpp>
-#include <liblava/base/device.hpp>
-#include <liblava/resource/buffer.hpp>
-#include <memory>
-#include <vector>
+#include "liblava-extras/raytracing/pipeline.hpp"
+#include "liblava/resource/buffer.hpp"
 
 // assumes shader groups were added to the pipeline in the following order:
 // raygen 1...X
@@ -108,7 +105,7 @@ namespace lava {
                     }
 
                     const size_t possible_padding = rt_properties.shaderGroupBaseAlignment - 1;
-                    sbt_buffer = make_buffer();
+                    sbt_buffer = buffer::make();
                     if (!sbt_buffer->create_mapped(device, nullptr, table_data.size() + possible_padding, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                         return false;
                     const VkDeviceAddress buffer_address = sbt_buffer->get_address();

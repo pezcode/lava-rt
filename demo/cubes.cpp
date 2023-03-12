@@ -1,9 +1,7 @@
 #include <imgui.h>
-#include <algorithm>
-#include <demo.hpp>
 #include <glm/gtc/color_space.hpp>
-#include <liblava-extras/raytracing.hpp>
-#include <liblava/lava.hpp>
+#include "demo.hpp"
+#include "liblava-extras/raytracing.hpp"
 
 using namespace lava;
 using namespace lava::extras::raytracing;
@@ -86,7 +84,7 @@ int main(int argc, char* argv[]) {
     descriptor::pool::ptr descriptor_pool;
 
     pipeline_layout::ptr blit_pipeline_layout;
-    graphics_pipeline::ptr blit_pipeline;
+    render_pipeline::ptr blit_pipeline;
 
     descriptor::ptr shared_descriptor_set_layout;
     VkDescriptorSet shared_descriptor_set;
@@ -161,7 +159,7 @@ int main(int argc, char* argv[]) {
         if (!app.device->vkCreateCommandPool(&create_info, &pool))
             return false;
 
-        descriptor_pool = make_descriptor_pool();
+        descriptor_pool = descriptor::pool::make();
         constexpr uint32_t set_count = 2;
         const VkDescriptorPoolSizes sizes = {
             { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
@@ -173,20 +171,20 @@ int main(int argc, char* argv[]) {
             return false;
 
         // uniform buffer for camera parameters and background color
-        uniform_buffer = make_buffer();
+        uniform_buffer = buffer::make();
         if (!uniform_buffer->create_mapped(app.device, nullptr, app.target->get_frame_count() * uniform_stride, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
             return false;
 
         // output image for the raytracing shader
         // RGBA16F is guaranteed to support these usage flags
         VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        output_image = make_image(format);
+        output_image = image::make(format);
         output_image->set_usage(VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         output_image->set_layout(VK_IMAGE_LAYOUT_UNDEFINED);
         output_image->set_aspect_mask(format_aspect_mask(format));
 
         // descriptor set used by the raytracing shaders and the blit shader
-        shared_descriptor_set_layout = make_descriptor();
+        shared_descriptor_set_layout = descriptor::make();
         shared_descriptor_set_layout->add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR);
         shared_descriptor_set_layout->add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR);
         if (!shared_descriptor_set_layout->create(app.device))
@@ -195,12 +193,12 @@ int main(int argc, char* argv[]) {
         shared_descriptor_set = shared_descriptor_set_layout->allocate(descriptor_pool->get());
 
         // blit pipeline that draws the raytraced output image to the swapchain
-        blit_pipeline_layout = make_pipeline_layout();
+        blit_pipeline_layout = pipeline_layout::make();
         blit_pipeline_layout->add(shared_descriptor_set_layout);
         if (!blit_pipeline_layout->create(app.device))
             return false;
 
-        blit_pipeline = make_graphics_pipeline(app.device);
+        blit_pipeline = render_pipeline::make(app.device);
 
         if (!blit_pipeline->add_shader(file_data("cubes/vert.spv"), VK_SHADER_STAGE_VERTEX_BIT))
             return false;
@@ -226,7 +224,7 @@ int main(int argc, char* argv[]) {
         render_pass->add_front(blit_pipeline);
 
         // descriptor used by the raytracing shader
-        raytracing_descriptor_set_layout = make_descriptor();
+        raytracing_descriptor_set_layout = descriptor::make();
         raytracing_descriptor_set_layout->add_binding(0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_SHADER_STAGE_RAYGEN_BIT_KHR);
         raytracing_descriptor_set_layout->add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
         raytracing_descriptor_set_layout->add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
@@ -234,7 +232,7 @@ int main(int argc, char* argv[]) {
         if (!raytracing_descriptor_set_layout->create(app.device))
             return false;
 
-        raytracing_pipeline_layout = make_pipeline_layout();
+        raytracing_pipeline_layout = pipeline_layout::make();
         raytracing_pipeline_layout->add(shared_descriptor_set_layout);
         raytracing_pipeline_layout->add(raytracing_descriptor_set_layout);
         if (!raytracing_pipeline_layout->create(app.device))
@@ -290,13 +288,13 @@ int main(int argc, char* argv[]) {
             return false;
 
         // ideally, these buffers would all be device-local (VMA_MEMORY_USAGE_GPU_ONLY) but to keep the demo code short they're host-visible to skip a staging buffer copy
-        instance_buffer = make_buffer();
+        instance_buffer = buffer::make();
         if (!instance_buffer->create(app.device, instances.data(), sizeof(instance_data) * instances.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
             return false;
-        vertex_buffer = make_buffer();
+        vertex_buffer = buffer::make();
         if (!vertex_buffer->create(app.device, vertices.data(), sizeof(vertex) * vertices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
             return false;
-        index_buffer = make_buffer();
+        index_buffer = buffer::make();
         if (!index_buffer->create(app.device, indices.data(), sizeof(lava::index) * indices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, false, VMA_MEMORY_USAGE_CPU_TO_GPU))
             return false;
 
@@ -343,7 +341,7 @@ int main(int argc, char* argv[]) {
             return false;
 
         scratch_buffer_size = std::max(scratch_buffer_size, top_as->scratch_buffer_size());
-        scratch_buffer = make_buffer();
+        scratch_buffer = buffer::make();
         if (!scratch_buffer->create(app.device, nullptr, scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR))
             return false;
         scratch_buffer_address = scratch_buffer->get_address();
