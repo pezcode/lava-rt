@@ -1,7 +1,6 @@
 #pragma once
 
-#include <liblava/block/pipeline.hpp>
-#include <memory>
+#include "liblava/block/pipeline.hpp"
 
 namespace lava {
     namespace extras {

@@ -1,4 +1,5 @@
-#include <liblava-extras/raytracing/pipeline.hpp>
+#include "liblava-extras/raytracing/pipeline.hpp"
+#include "liblava/util/log.hpp"
 
 namespace lava {
     namespace extras {
@@ -77,7 +78,7 @@ namespace lava {
 
                 return check(
                     device->call().vkCreateRayTracingPipelinesKHR(device->get(), VK_NULL_HANDLE, pipeline_cache, 1,
-                                                                  &create_info, memory::alloc(), &vk_pipeline));
+                                                                  &create_info, memory::instance().alloc(), &vk_pipeline));
             }
 
             void raytracing_pipeline::teardown() {

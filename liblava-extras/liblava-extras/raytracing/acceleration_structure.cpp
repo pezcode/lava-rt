@@ -1,5 +1,4 @@
-#include <algorithm>
-#include <liblava-extras/raytracing/acceleration_structure.hpp>
+#include "liblava-extras/raytracing/acceleration_structure.hpp"
 
 namespace lava {
     namespace extras {
@@ -28,12 +27,12 @@ namespace lava {
                     create_info.size = get_sizes().accelerationStructureSize;
                 }
 
-                as_buffer = make_buffer();
+                as_buffer = buffer::make();
                 if (!as_buffer->create(device, nullptr, create_info.size, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT))
                     return false;
                 create_info.buffer = as_buffer->get();
 
-                if (!check(vkCreateAccelerationStructureKHR(device->get(), &create_info, memory::alloc(), &handle)))
+                if (!check(vkCreateAccelerationStructureKHR(device->get(), &create_info, memory::instance().alloc(), &handle)))
                     return false;
 
                 const VkAccelerationStructureDeviceAddressInfoKHR address_info = {
@@ -48,20 +47,20 @@ namespace lava {
                     .queryCount = 1
                 };
 
-                check(vkCreateQueryPool(device->get(), &pool_info, memory::alloc(), &query_pool));
+                check(vkCreateQueryPool(device->get(), &pool_info, memory::instance().alloc(), &query_pool));
 
                 return true;
             }
 
             void acceleration_structure::destroy() {
                 if (handle != VK_NULL_HANDLE) {
-                    device->call().vkDestroyAccelerationStructureKHR(device->get(), handle, memory::alloc());
+                    device->call().vkDestroyAccelerationStructureKHR(device->get(), handle, memory::instance().alloc());
                     handle = VK_NULL_HANDLE;
                     address = 0;
                 }
 
                 if (query_pool != VK_NULL_HANDLE) {
-                    device->call().vkDestroyQueryPool(device->get(), query_pool, memory::alloc());
+                    device->call().vkDestroyQueryPool(device->get(), query_pool, memory::instance().alloc());
                     query_pool = VK_NULL_HANDLE;
                 }
 

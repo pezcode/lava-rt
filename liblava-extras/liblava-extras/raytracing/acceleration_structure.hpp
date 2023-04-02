@@ -1,10 +1,6 @@
 #pragma once
 
-#include <glm/mat4x3.hpp>
-#include <liblava/base/device.hpp>
-#include <liblava/resource/buffer.hpp>
-#include <memory>
-#include <vector>
+#include "liblava/resource/buffer.hpp"
 
 namespace lava {
     namespace extras {
